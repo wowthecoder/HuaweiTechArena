@@ -464,6 +464,6 @@ def evaluation_function(solution,
                               verbose=verbose)
     # CATCH EXCEPTIONS
     except Exception as e:
-        logger.error(e)
+        print(e)
         return None
 
