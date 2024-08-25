@@ -1,4 +1,5 @@
 
+import json
 import numpy as np
 import pandas as pd
 from seeds import known_seeds
@@ -107,9 +108,11 @@ for seed in seeds:
 
     # GET THE DEMAND
     actual_demand = get_actual_demand(demand)
-
-    # CALL YOUR APPROACH HERE
-    solution = get_my_solution(actual_demand)
+    file_path = './output/best_solution.json'
+    solution = []
+    # Open and load the JSON file
+    with open(file_path, 'r') as file:
+        solution = json.load(file)
     output_dir = './output/'
     os.makedirs(output_dir, exist_ok=True)
     # SAVE YOUR SOLUTION

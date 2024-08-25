@@ -4,6 +4,7 @@ import logging
 import numpy as np
 import pandas as pd
 from scipy.stats import truncweibull_min
+import matplotlib.pyplot as plt
 
 
 # CREATE LOGGER
@@ -339,7 +340,7 @@ def get_evaluation(solution,
                    verbose=1):
 
     # SOLUTION EVALUATION
-    
+    outputs = []
     # SOLUTION DATA PREPARATION
     solution = solution_data_preparation(solution, 
                                          servers, 
@@ -405,8 +406,18 @@ def get_evaluation(solution,
                       'P': np.nan}
 
         if verbose:
-            print(output)
-
+            outputs.append(output)
+            # print(output)
+    
+    # graph timestep vs objective
+    if verbose:
+        df = pd.DataFrame(outputs)
+        print(df)
+        fig, ax = plt.subplots()
+        ax.plot(df['time-step'],df['O'])
+        ax.set(xlabel='time-step', ylabel='Objective')
+        plt.show()
+        
     return OBJECTIVE
 
 
