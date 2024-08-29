@@ -477,4 +477,8 @@ def evaluation_function(solution,
     # CATCH EXCEPTIONS
     except Exception as e:
         logger.error(e)
+<<<<<<< HEAD
         return None
+=======
+        return None
+>>>>>>> bbcd2ec0cdddcaac73712515f8fd1398ff87160f

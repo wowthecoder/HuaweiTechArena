@@ -5,6 +5,7 @@ import random
 from evaluation import change_selling_prices_format, check_datacenter_slots_size_constraint, check_release_time, evaluation_function, get_actual_demand, get_time_step_fleet, solution_data_preparation
 from utils import load_problem_data, load_solution, save_solution
 import pandas as pd
+from scipy.special import expit
 
 # Assuming we have an evaluate_solution function that takes in an action sequence
 # and returns the corresponding objective score
@@ -104,15 +105,14 @@ def simulated_annealing(initial_solution, initial_temp, cooling_rate, stop_temp,
     best_cost = evaluate_solution(best_solution, demand, datacenters, servers, selling_prices, seeds)
     print(best_cost)
     while current_temp > stop_temp:
+        print(f"Current Temp: {current_temp}")
         for _ in range(iterations):
             neighbor_solution, neighbor_cost = generate_neighbor(current_solution)
             neighbor_cost = float(neighbor_cost)
             print(neighbor_cost)
             delta_cost = neighbor_cost - best_cost
 
-            exponent = -delta_cost / current_temp
-            exponent = np.clip(exponent, -100, 100)  # Adjust the clipping range as needed
-            if delta_cost > 0 or random.random() < np.exp(exponent):
+            if delta_cost > 0 or random.random() < expit(-delta_cost / current_temp):
                 current_solution = neighbor_solution
                 if neighbor_cost > best_cost:
                     best_solution = current_solution
