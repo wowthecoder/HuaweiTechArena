@@ -43,7 +43,7 @@ class DataCenterEnv(gym.Env):
             "time_step": Discrete(168), 
             "datacenter_id": Discrete(4), # 0: DC1, 1: DC2, 2: DC3, 3: DC4
             "server_generation": Discrete(7), # 0: CPU.S1, 1: CPU.S2, 2: CPU.S3, 3: CPU.S4, 4: GPU.S1, 5: GPU.S2, 6: GPU.S3
-            "server_id": Text(min_length=36, max_length=36), # uuid4 is a 36 character string, including 4 hyphens
+            "server_id": Discrete(28000), # max 28000 servers ( Total 55845 slots across all data centers, min 2 slots per server)
             "action": Discrete(3) # 0: buy, 1: move, 2: dismiss
         }))
 
@@ -52,14 +52,14 @@ class DataCenterEnv(gym.Env):
             "generation": Discrete(7),
             "release_time": Discrete(168),
             "server_id": Text(min_length=36, max_length=36),
-            "selling_price": Discrete(1),
-            "purchase_price": Discrete(1),
-            "slots_size": Discrete(1),
-            "energy_consumption": Discrete(1),
-            "capacity": Discrete(1),
-            "life_expectancy": Discrete(1),
-            "cost_of_moving": Discrete(1),
-            "operating_time": Discrete(1),
+            "selling_price": Box(low=0, high=3000, shape=(1,), dtype=int),
+            "purchase_price": Box(low=1, high=200000, shape=(1,), dtype=int),
+            "slots_size": Box(low=1, high=5, shape=(1,), dtype=int),
+            "energy_consumption": Box(low=1, high=5, shape=(1,), dtype=int),
+            "capacity": Box(low=1, high=200, shape=(1,), dtype=int),
+            "life_expectancy": Discrete(1), # all 96
+            "cost_of_moving": Discrete(1), # all 1000
+            "operating_time": Discrete(96),
         })
         center_data = Dict({
             "total_slots": Discrete(1),
@@ -69,7 +69,9 @@ class DataCenterEnv(gym.Env):
             "servers": Sequence(server_data)
         })
         demand_data = Dict({
-
+            "time_step": Discrete(168),
+            "latency_sensitivity": Discrete(3),
+            "demands": Sequence(Box(low=0, high=1e6, shape=(1,), dtype=int)), # CPU S1-4 and GPU S1-3
         })
         self.observation_space = Dict({
             "demand": demand_data,
@@ -80,11 +82,13 @@ class DataCenterEnv(gym.Env):
             "DC4": center_data
         })
 
-    def _get_obs(self):
-        return {"agent": self._agent_location, "target": self._target_location}
-    
-    def _get_info(self):
-        return {"distance": np.linalg.norm(self._agent_location - self._target_location, ord=1)}
+    def _get_obs(self, demand={}, time_step=1):
+        obs = {}
+        obs["demand"] = demand
+        obs["time_step"] = time_step
+        for i in len(self.data_centers):
+            obs["DC"+str(i+1)] = self.data_centers[i]
+        return obs
     
     def reset(self, seed=None, options=None):
         """
@@ -92,33 +96,47 @@ class DataCenterEnv(gym.Env):
         :return: (np.array)
         """
         super().reset(seed=seed, options=options)
-        # Initialize the agent at the right of the grid
-        self.agent_pos = self.grid_size - 1
-        # here we convert to float32 to make it more general (in case we want to use continuous actions)
-        return np.array([self.agent_pos]).astype(np.float32), {}  # empty info dict
+        self.server_ids = set() 
+        for center in self.data_centers:
+            center["occupied_slots"] = 0
+            center["servers"] = []
+        return self._get_obs({}, 1), {}  # empty info dict
     
-    def get_valid_actions(self):
-        pass
+    def is_action_valid(self, action):
+        return action["action"] == "buy" or action["server_id"] in self.server_ids
+
+    def calculate_reward(self, demand, time_step):
+        reward = 0
+        for i in range(len(self.data_centers)):
+            center = self.data_centers[i]
+            for server in center["servers"]:
+                if server["generation"] == demand["latency_sensitivity"]:
+                    reward += demand["demands"][server["generation"]] * self.selling_prices.loc[time_step, server["generation"]]
+        return reward
 
     def step(self, action):
         # Check if action is valid
-        valid_actions = self.get_valid_actions()
+        if not self.is_action_valid(action):
+            # Optionally, penalize the agent for selecting an invalid action
+            reward = -10.0
+            terminated = bool(action["time_step"] == 167)
+            truncated = False
+            return self._get_obs, reward, terminated, truncated, {}
 
-        # Account for the boundaries of the grid
-        self.agent_pos = np.clip(self.agent_pos, 0, self.grid_size)
-
-        # Are we at the left of the grid?
-        terminated = bool(self.agent_pos == 0)
+        terminated = bool(action["time_step"] == 167)
         truncated = False  # we do not limit the number of steps here
 
-        # Null reward everywhere except when reaching the goal (left of the grid)
-        reward = 1 if self.agent_pos == 0 else 0
+        # Apply action
+        datacenter = self.data_centers[action["datacenter_id"]]
+        # Automatically dismiss any server that is past the life expectancy
+
+        reward = self.calculate_reward()
 
         # Optionally we can pass additional info, we are not using that for now
         info = {}
 
         return (
-            np.array([self.agent_pos]).astype(np.float32),
+            self._get_obs(),
             reward,
             terminated,
             truncated,
@@ -126,11 +144,7 @@ class DataCenterEnv(gym.Env):
         )
 
     def render(self):
-        # agent is represented as a cross, rest as a dot
-        if self.render_mode == "console":
-            print("." * self.agent_pos, end="")
-            print("x", end="")
-            print("." * (self.grid_size - self.agent_pos))
+        print("State: ", self.data_centers)
 
     def close(self):
         pass
