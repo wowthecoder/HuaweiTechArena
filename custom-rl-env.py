@@ -1,16 +1,27 @@
 import numpy as np
 import gymnasium as gym
 from gymnasium.spaces import Dict, Discrete, Sequence, Box, Tuple # Be careful, sequence represents a tuple of variable length
-import uuid
+import pandas as pd
+from evaluation import get_time_step_demand, get_time_step_fleet, update_fleet, get_capacity_by_server_generation_latency_sensitivity, check_datacenter_slots_size_constraint, get_utilization, get_normalized_lifespan, get_profit, put_fleet_on_hold
 
 num_server_gens = 7
 
-class DataCenterEnv(gym.Env):
-    """
-    Custom Environment that follows gym interface.
-    This is a simple env where the agent must learn to go always left.
-    """
+def format_actions(actions):
+    action_map = ["buy", "move", "dismiss"]
+    sgen_map = ["CPU.S1", "CPU.S2", "CPU.S3", "CPU.S4", "GPU.S1", "GPU.S2", "GPU.S3"]
+    formatted_actions = []
+    for action in actions:
+        if action["action"] != 3:
+            formatted_actions.append({
+                "time_step": action["time_step"],
+                "datacenter_id": f"DC{action["datacenter_id"] + 1}",
+                "server_generation": sgen_map[action["server_generation"]],
+                "server_id": action["server_id"],
+                "action": action_map[action["action"]]
+            })
+    return formatted_actions
 
+class DataCenterEnv(gym.Env):
     # Because of google colab, we cannot implement the GUI ('human' render mode)
     metadata = {"render_modes": ["console"]}
 
@@ -19,24 +30,26 @@ class DataCenterEnv(gym.Env):
         self.time_step = 0
         for i in range(len(datacenters)):
             dc = {
-                "total_slots": datacenters.loc[i, 'slots_capacity'],
                 "remaining_slots": datacenters.loc[i, 'slots_capacity'],
                 "energy_cost": datacenters.loc[i, 'cost_of_energy'],
                 "latency_sensitivity": datacenters.loc[i, 'latency_sensitivity'],
-                "servers": [],
-                "server_ids": set()
+                # Need to convert to tuple when returning observation
+                "servers_dict": {} # key: server_id, value: [generation (digit from 0-6), operating_time]
             }
             self.data_centers.append(dc)
 
         # server info 
         # convert the release time from string to list of integers
         servers["release_time"] = servers["release_time"].apply(lambda x: list(map(int, x.strip('[]').split(','))))
-        self.server_info = servers 
+        self.server_info = tuple(servers.to_dict(orient='records'))
         self.selling_prices = selling_prices
+        demands["demands"] = demands[demands.columns[-7:]].apply(tuple, axis=1) # convert the demands to a tuple
         self.demands = demands
+
+        self.fleet = pd.DataFrame()
         
 
-    # datacenters, servers, selling_prices are pandas dataframes
+    # datacenters, demands, servers, selling_prices are pandas dataframes
     def __init__(self, datacenters, demands, servers, selling_prices, render_mode="console"):
         super(DataCenterEnv, self).__init__()
         self.render_mode = render_mode
@@ -45,12 +58,13 @@ class DataCenterEnv(gym.Env):
 
         # Define action and observation space
         # They must be gym.spaces objects
+        # Hold action is included because a Sequence must return at least one action, but sometimes we want to do nothing at a time step
         self.action_space = Sequence(Dict({
             "time_step": Discrete(168), 
             "datacenter_id": Discrete(4), # 0: DC1, 1: DC2, 2: DC3, 3: DC4
             "server_generation": Discrete(num_server_gens), # 0: CPU.S1, 1: CPU.S2, 2: CPU.S3, 3: CPU.S4, 4: GPU.S1, 5: GPU.S2, 6: GPU.S3
             "server_id": Discrete(28000), # max 28000 servers ( Total 55845 slots across all data centers, min 2 slots per server)
-            "action": Discrete(3) # 0: buy, 1: move, 2: dismiss
+            "action": Discrete(4) # 0: buy, 1: move, 2: dismiss, 3: hold
         }))
 
         # The observation will be the state of the data centers
@@ -62,16 +76,16 @@ class DataCenterEnv(gym.Env):
         server_info = Dict({
             "generation": Discrete(num_server_gens),
             "release_time": Tuple(Discrete(168), Discrete(168)),
-            "selling_price": Box(low=0, high=3000, shape=(1,), dtype=int),
-            "purchase_price": Box(low=1, high=200000, shape=(1,), dtype=int),
+            "selling_price": Box(low=0, high=3000, shape=(1,), dtype=float),
+            "purchase_price": Box(low=1, high=200000, shape=(1,), dtype=float),
             "slots_size": Box(low=1, high=5, shape=(1,), dtype=int),
             "energy_consumption": Box(low=1, high=5000, shape=(1,), dtype=int),
             "capacity": Box(low=1, high=200, shape=(1,), dtype=int),
             "life_expectancy": Discrete(1), # all 96
             "cost_of_moving": Discrete(1), # all 1000
+            "avg_maintenance_cost": Box(low=0, high=3100, shape=(1,), dtype=int),
         })
         center_data = Dict({
-            "total_slots": Discrete(1),
             "remaining_slots": Box(low=0, high=26000, shape=(1,), dtype=int),
             "energy_cost": Box(low=0.0, high=1.0, shape=(1,), dtype=float),
             "latency_sensitivity": Discrete(3), # 0: low, 1: medium, 2: high
@@ -92,12 +106,21 @@ class DataCenterEnv(gym.Env):
             "DC4": center_data
         })
 
-    def _get_obs(self, demand={}, time_step=1):
+    def _get_obs(self):
         obs = {}
-        obs["demand"] = demand
-        obs["time_step"] = time_step
-        for i in len(self.data_centers):
-            obs["DC"+str(i+1)] = self.data_centers[i]
+        demand_ts = self.demands.loc[self.demands["time_step"] == self.time_step]  
+        demand_list = demand_ts[['time_step', 'latency_sensitivity', 'demands']].to_dict(orient='records')
+        obs["demand"] = tuple(demand_list)
+        obs["time_step"] = self.time_step
+        obs["server_info"] = self.server_info   
+        for i, center in enumerate(self.data_centers):
+            obs_dict = center.copy()
+            # Convert the server dictionary to a tuple
+            obs_dict.pop("servers_dict")
+            server_list = [{"server_id": key, "generation": value[0], "operating_time": value[1]} for key, value in center["servers_dict"].items()]
+            obs_dict["servers"] = tuple(server_list)
+            obs["DC"+str(i+1)] = obs_dict
+
         return obs
     
     def reset(self, seed=None, options=None):
@@ -106,11 +129,11 @@ class DataCenterEnv(gym.Env):
         :return: (np.array)
         """
         super().reset(seed=seed, options=options)
-        self.server_ids = set() 
+        self.time_step = 1
         for center in self.data_centers:
-            center["occupied_slots"] = 0
-            center["servers"] = []
-        return self._get_obs({}, 1), {}  # empty info dict
+            center["remaining_slots"] = 0
+            center["servers_dict"] = {}
+        return self._get_obs(), {}  # empty info dict
     
     def is_action_valid(self, actions):
         # 1. Check if server id is valid ( buy needs to create a new id, move and dismiss need to use an existing id )
@@ -119,72 +142,113 @@ class DataCenterEnv(gym.Env):
         # 4. Check if server move is valid ( the source datacenter has the server and the destination datacenter has enough slots)
 
         # Combine all server ids
-        combined_server_ids = {server_id for dc in self.data_centers for server_id in dc["server_ids"]}
+        combined_server_ids = {server_id for dc in self.data_centers for server_id in dc["servers_dict"].keys()}
         for action in actions:
-            if (action["action"] == 0 and action["server_id"] in combined_server_ids) \
-            or (action["action"] == 1 and action["server_id"] not in combined_server_ids) \
-            or (action["action"] == 2 and action["server_id"] not in self.data_centers[action["datacenter_id"]]["server_ids"]) \
+            act, sid, dcid, sgen = action["action"], action["server_id"], action["datacenter_id"], action["server_generation"]
+            center = self.data_centers[dcid]
+            server_info = self.server_info[sgen]
+            if (act == 0 and sid in combined_server_ids) \
+            or (act == 1 and sid not in combined_server_ids) \
+            or (act == 2 and sid not in center["servers_dict"].keys()) \
             or action["time_step"] != self.time_step \
-            or self.data_centers[action["datacenter_id"]]["remaining_slots"] < self.server_info.loc[action["server_generation"], "slots_size"] \
-            or action["action"] == "buy" and self.time_step not in self.server_info.loc[action["server_generation"], "release_time"] \
-            or action["action"] == "move" and action["server_id"] in self.data_centers[action["datacenter_id"]]["server_ids"] \ 
-            or action["action"] == "move" and self.data_centers[action["datacenter_id"]]["remaining_slots"] < self.server_info.loc[action["server_generation"], "slots_size"]:
+            or center["remaining_slots"] < server_info["slots_size"] \
+            or act == 0 and self.time_step not in server_info["release_time"] \
+            or act == 1 and action["server_id"] in center["servers_dict"].keys() \
+            or act == 1 and center["remaining_slots"] < server_info["slots_size"]:
                 return False
         return True 
 
-    def calculate_reward(self, demand, time_step):
-        reward = 0
-        for i in range(len(self.data_centers)):
-            center = self.data_centers[i]
-            for server in center["servers"]:
-                if server["generation"] == demand["latency_sensitivity"]:
-                    reward += demand["demands"][server["generation"]] * self.selling_prices.loc[time_step, server["generation"]]
+    def calculate_reward(self, actions):
+        # GET THE ACTUAL DEMAND AT TIMESTEP ts
+        D = get_time_step_demand(self.demands, self.time_step)
+
+        # GET THE SERVERS DEPLOYED AT TIMESTEP ts
+        formatted_actions = format_actions(actions)
+        ts_fleet = get_time_step_fleet(pd.DataFrame(formatted_actions), self.time_step)
+
+        if ts_fleet.empty and not self.fleet.empty:
+            ts_fleet = self.fleet
+        elif ts_fleet.empty and self.fleet.empty:
+            return 0
+
+        # UPDATE FLEET
+        self.fleet = update_fleet(self.time_step, self.fleet, ts_fleet)
+  
+        # CHECK IF THE FLEET IS EMPTY
+        if self.fleet.shape[0] > 0:
+            # GET THE SERVERS CAPACITY AT TIMESTEP ts
+            Zf = get_capacity_by_server_generation_latency_sensitivity(self.fleet)
+    
+            # CHECK CONSTRAINTS
+            check_datacenter_slots_size_constraint(self.fleet)
+    
+            # EVALUATE THE OBJECTIVE FUNCTION AT TIMESTEP ts
+            U = get_utilization(D, Zf)
+    
+            L = get_normalized_lifespan(self.fleet)
+    
+            P = get_profit(D, 
+                           Zf, 
+                           self.selling_prices,
+                           self.fleet)
+            reward = U * L * P
+
+            # PUT ENTIRE FLEET on HOLD ACTION
+            self.fleet = put_fleet_on_hold(self.fleet)
+        
         return reward
 
     def step(self, actions):
-        self.time_step += 1
         # Check if action is valid
         if not self.is_action_valid(actions):
             # Optionally, penalize the agent for selecting an invalid action
             reward = -10.0
             terminated = bool(self.time_step == 168)
             truncated = False
-            return self._get_obs, reward, terminated, truncated, {}
+            self.time_step += 1
+            return self._get_obs(), reward, terminated, truncated, {}
 
         terminated = bool(self.time_step == 168)
         truncated = False  # we do not limit the number of steps here
 
         # Apply all actions
-        datacenter = self.data_centers[action["datacenter_id"]]
+        center = self.data_centers[action["datacenter_id"]]
+        sid, sgen = action["server_id"], action["server_generation"]
         for action in actions:
-            if action["action"] == "buy":
-                server = {
-                    "generation": action["server_generation"],
-                    "release_time": self.server_info.loc[action["server_generation"], "release_time"],
-                    "server_id": action["server_id"],
-                    "selling_price": self.selling_prices.loc[action["server_generation"] + 7 * datacenter["latency_sensitivity"], "selling_price"],
-                    "purchase_price": self.server_info.loc[action["server_generation"], "purchase_price"],
-                    "slots_size": self.server_info.loc[action["server_generation"], "slots_size"],
-                    "energy_consumption": self.server_info.loc[action["server_generation"], "energy_consumption"],
-                    "capacity": self.server_info.loc[action["server_generation"], "capacity"],
-                    "life_expectancy": self.server_info.loc[action["server_generation"], "life_expectancy"],
-                    "cost_of_moving": self.server_info.loc[action["server_generation"], "cost_of_moving"],
-                    "operating_time": 0
-                }
-                # Add server id to the set
-                self.server_ids.add(action["server_id"])
-            elif action["action"] == "move":
-                asdf
-            else: # dismiss
+            if action["action"] == 0:
+                server = [action["server_generation"], 0]
+                center["servers_dict"][sid] = server
+                center["remaining_slots"] -= self.server_info[sgen]["slots_size"]
+            elif action["action"] == 1:
+                # Find the server in the source data center and remove it
+                server = None
+                for src_center in self.data_centers:
+                    if sid in src_center["servers_dict"].keys():
+                        server = src_center["servers_dict"].pop(sid)
+                        src_center["remaining_slots"] += self.server_info[sgen]["slots_size"]
+                        break
+                # Add server to destination data center
+                center["servers_dict"][sid] = server
+                center["remaining_slots"] -= self.server_info[sgen]["slots_size"]
+            elif action["action"] == 2: # dismiss
                 # Remove server id from set
-                self.server_ids.remove(action["server_id"])
+                center["servers_dict"].pop(sid)
 
+        # Increment operating time for all servers
         # Automatically dismiss any server that is past the life expectancy
+        for center in self.data_centers:
+            for server in center["servers_dict"].values():
+                server[1] += 1
+                if server[1] >= self.server_info[server[0]]["life_expectancy"]:
+                    center["servers_dict"].pop(sid)
+                    center["remaining_slots"] += self.server_info[server[0]]["slots_size"]
 
-        reward = self.calculate_reward()
+        reward = self.calculate_reward(actions)
 
         # Optionally we can pass additional info, we are not using that for now
         info = {}
+
+        self.time_step += 1
 
         return (
             self._get_obs(),
