@@ -21,7 +21,7 @@ def format_actions(actions):
             })
     return formatted_actions
 
-class DataCenterEnv(gym.Env):
+class ServerFleetEnv(gym.Env):
     # Because of google colab, we cannot implement the GUI ('human' render mode)
     metadata = {"render_modes": ["console"]}
 
@@ -259,7 +259,8 @@ class DataCenterEnv(gym.Env):
         )
 
     def render(self):
-        print("State: ", self.data_centers)
+        print("State: ", self._get_obs())
+        print("Fleet: ", self.fleet)
 
     def close(self):
         pass
