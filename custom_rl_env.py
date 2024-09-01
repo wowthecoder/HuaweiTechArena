@@ -34,7 +34,7 @@ class ServerFleetEnv(gym.Env):
                 "energy_cost": datacenters.loc[i, 'cost_of_energy'],
                 "latency_sensitivity": datacenters.loc[i, 'latency_sensitivity'],
                 # Need to convert to tuple when returning observation
-                "servers_dict": {} # key: server_id, value: [generation (digit from 0-6), operating_time]
+                "servers_dict": {} # key: server_id, value: [generation (digit from 0-6), operating_time, selling_price]
             }
             self.data_centers.append(dc)
 
@@ -43,7 +43,7 @@ class ServerFleetEnv(gym.Env):
         servers["release_time"] = servers["release_time"].apply(lambda x: list(map(int, x.strip('[]').split(','))))
         self.server_info = tuple(servers.to_dict(orient='records'))
         self.selling_prices = selling_prices
-        demands["demands"] = demands[demands.columns[-7:]].apply(tuple, axis=1) # convert the demands to a tuple
+        demands["demands_by_latency"] = demands[demands.columns[-3:]].apply(tuple, axis=1) # convert the demands to a tuple
         self.demands = demands
 
         self.fleet = pd.DataFrame()
@@ -74,18 +74,18 @@ class ServerFleetEnv(gym.Env):
             "generation": Discrete(num_server_gens),
             "server_id": Discrete(28000),
             "operating_time": Discrete(96),
+            "selling_price": Box(low=0, high=3000, shape=(1,), dtype=float),
         })
         server_info = Dict({
             "generation": Discrete(num_server_gens),
             "release_time": Tuple([Discrete(168)] * 2),
-            "selling_price": Box(low=0, high=3000, shape=(1,), dtype=float),
             "purchase_price": Box(low=1, high=200000, shape=(1,), dtype=float),
             "slots_size": Box(low=1, high=5, shape=(1,), dtype=int),
             "energy_consumption": Box(low=1, high=5000, shape=(1,), dtype=int),
             "capacity": Box(low=1, high=200, shape=(1,), dtype=int),
             "life_expectancy": Discrete(1), # all 96
             "cost_of_moving": Discrete(1), # all 1000
-            "avg_maintenance_cost": Box(low=0, high=3100, shape=(1,), dtype=int),
+            "average_maintenance_fee": Box(low=0, high=3100, shape=(1,), dtype=int),
         })
         center_data = Dict({
             "remaining_slots": Box(low=0, high=26000, shape=(1,), dtype=int),
@@ -94,12 +94,11 @@ class ServerFleetEnv(gym.Env):
             "servers": Sequence(server_data)
         })
         demand_data = Dict({
-            "time_step": Discrete(168),
-            "latency_sensitivity": Discrete(3),
-            "demands": Tuple([Box(low=0, high=1e6, shape=(1,), dtype=int)] * num_server_gens), # CPU.S1-4, GPU.S1-3
+            "server_generation": Discrete(7),
+            "demands_by_latency": Tuple([Box(low=0, high=1e6, shape=(1,), dtype=int)] * 3), # high, medium, low
         })
         self.observation_space = Dict({
-            "demand": Tuple([demand_data] * 3), # each step there's 3 demands, 1 for each latency sensitivity
+            "demands": Sequence(demand_data),
             "time_step": Discrete(168),
             "server_info": Tuple([server_info] * num_server_gens),
             "DC1": center_data,
@@ -111,15 +110,16 @@ class ServerFleetEnv(gym.Env):
     def _get_obs(self):
         obs = {}
         demand_ts = self.demands.loc[self.demands["time_step"] == self.time_step]  
-        demand_list = demand_ts[['time_step', 'latency_sensitivity', 'demands']].to_dict(orient='records')
-        obs["demand"] = tuple(demand_list)
+        demand_list = demand_ts[['server_generation', 'demands_by_latency']].to_dict(orient='records')
+        obs["demands"] = tuple(demand_list)
         obs["time_step"] = self.time_step
         obs["server_info"] = self.server_info   
         for i, center in enumerate(self.data_centers):
             obs_dict = center.copy()
             # Convert the server dictionary to a tuple
             obs_dict.pop("servers_dict")
-            server_list = [{"server_id": key, "generation": value[0], "operating_time": value[1]} for key, value in center["servers_dict"].items()]
+            server_list = [{"server_id": key, "generation": value[0], "operating_time": value[1], "selling_price": value[2]} \
+                for key, value in center["servers_dict"].items()]
             obs_dict["servers"] = tuple(server_list)
             obs["DC"+str(i+1)] = obs_dict
 
@@ -142,6 +142,7 @@ class ServerFleetEnv(gym.Env):
         # 2. Check if data center has enough slots left
         # 3. Check if server is available for purchase at that time step
         # 4. Check if server move is valid ( the source datacenter has the server and the destination datacenter has enough slots)
+        # 5. If move/dismiss, check if server generation matches id
 
         # Combine all server ids
         combined_server_ids = {server_id for dc in self.data_centers for server_id in dc["servers_dict"].keys()}
@@ -156,7 +157,8 @@ class ServerFleetEnv(gym.Env):
             or center["remaining_slots"] < server_info["slots_size"] \
             or (act == 0 and self.time_step not in server_info["release_time"]) \
             or (act == 1 and sid in center["servers_dict"].keys()) \
-            or (act == 1 and center["remaining_slots"] < server_info["slots_size"]):
+            or (act == 1 and center["remaining_slots"] < server_info["slots_size"]) \
+            or (act != 0 and sgen != center["servers_dict"][sid]["generation"]):
                 return False
         return True 
 
@@ -218,7 +220,7 @@ class ServerFleetEnv(gym.Env):
             center = self.data_centers[action[1]]
             sgen, sid, act = action[2], action[3], action[4]
             if act == 0:
-                server = [action["server_generation"], 0]
+                server = [sgen, 0]
                 center["servers_dict"][sid] = server
                 center["remaining_slots"] -= self.server_info[sgen]["slots_size"]
             elif act == 1:
