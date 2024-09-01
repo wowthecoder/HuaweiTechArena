@@ -133,8 +133,10 @@ def change_selling_prices_format(selling_prices):
     return selling_prices
 
 
-def get_actual_demand(demand):
+def get_actual_demand(demand, seed=None):
     # CALCULATE THE ACTUAL DEMAND AT TIME-STEP t
+    if seed:
+        np.random.seed(seed)
     actual_demand = []
     for ls in get_known('latency_sensitivity'):
         for sg in get_known('server_generation'):

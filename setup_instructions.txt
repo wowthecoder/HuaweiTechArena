@@ -1,0 +1,10 @@
+For Imperial SSH lab machines,
+https://www.imperial.ac.uk/computing/people/csg/guides/python/virtual-environment/#d.en.1235829
+cd into this directory, and type
+export PENV=/vol/bitbucket/${USER}/huaweienv
+python3 -m virtualenv $PENV
+
+Then activate it by typing
+source $PENV/bin/activate
+
+To deactivate after usage, just type: deactivate

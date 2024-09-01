@@ -1,8 +1,9 @@
 import numpy as np
 import gymnasium as gym
-from gymnasium.spaces import Dict, Discrete, Sequence, Box, Tuple # Be careful, sequence represents a tuple of variable length
+from gymnasium.spaces import Dict, Discrete, Sequence, Box, Tuple, MultiDiscrete # Be careful, sequence represents a tuple of variable length
 import pandas as pd
-from evaluation import get_time_step_demand, get_time_step_fleet, update_fleet, get_capacity_by_server_generation_latency_sensitivity, check_datacenter_slots_size_constraint, get_utilization, get_normalized_lifespan, get_profit, put_fleet_on_hold
+from evaluation import get_time_step_demand, get_time_step_fleet, update_fleet, get_capacity_by_server_generation_latency_sensitivity, \
+    check_datacenter_slots_size_constraint, get_utilization, get_normalized_lifespan, get_profit, put_fleet_on_hold
 
 num_server_gens = 7
 
@@ -13,16 +14,15 @@ def format_actions(actions):
     for action in actions:
         if action["action"] != 3:
             formatted_actions.append({
-                "time_step": action["time_step"],
-                "datacenter_id": f"DC{action["datacenter_id"] + 1}",
-                "server_generation": sgen_map[action["server_generation"]],
-                "server_id": action["server_id"],
-                "action": action_map[action["action"]]
+                "time_step": action[0],
+                "datacenter_id": f"DC{action[1] + 1}",
+                "server_generation": sgen_map[action[2]],
+                "server_id": action[3],
+                "action": action_map[action[4]]
             })
     return formatted_actions
 
 class ServerFleetEnv(gym.Env):
-    # Because of google colab, we cannot implement the GUI ('human' render mode)
     metadata = {"render_modes": ["console"]}
 
     def _init_state(self, datacenters, demands, servers, selling_prices):
@@ -51,7 +51,7 @@ class ServerFleetEnv(gym.Env):
 
     # datacenters, demands, servers, selling_prices are pandas dataframes
     def __init__(self, datacenters, demands, servers, selling_prices, render_mode="console"):
-        super(DataCenterEnv, self).__init__()
+        super(ServerFleetEnv, self).__init__()
         self.render_mode = render_mode
 
         self._init_state(datacenters, demands, servers, selling_prices)
@@ -59,13 +59,15 @@ class ServerFleetEnv(gym.Env):
         # Define action and observation space
         # They must be gym.spaces objects
         # Hold action is included because a Sequence must return at least one action, but sometimes we want to do nothing at a time step
-        self.action_space = Sequence(Dict({
-            "time_step": Discrete(168), 
-            "datacenter_id": Discrete(4), # 0: DC1, 1: DC2, 2: DC3, 3: DC4
-            "server_generation": Discrete(num_server_gens), # 0: CPU.S1, 1: CPU.S2, 2: CPU.S3, 3: CPU.S4, 4: GPU.S1, 5: GPU.S2, 6: GPU.S3
-            "server_id": Discrete(28000), # max 28000 servers ( Total 55845 slots across all data centers, min 2 slots per server)
-            "action": Discrete(4) # 0: buy, 1: move, 2: dismiss, 3: hold
-        }))
+        # Dictionary action space is not supported, but leaving the commented code here for description 
+        # self.action_space = Sequence(Dict({
+        #     "time_step": Discrete(168), 
+        #     "datacenter_id": Discrete(4), # 0: DC1, 1: DC2, 2: DC3, 3: DC4
+        #     "server_generation": Discrete(num_server_gens), # 0: CPU.S1, 1: CPU.S2, 2: CPU.S3, 3: CPU.S4, 4: GPU.S1, 5: GPU.S2, 6: GPU.S3
+        #     "server_id": Discrete(28000), # max 28000 servers ( Total 55845 slots across all data centers, min 2 slots per server)
+        #     "action": Discrete(4) # 0: buy, 1: move, 2: dismiss, 3: hold
+        # }))
+        self.action_space = Sequence(MultiDiscrete([168, 4, num_server_gens, 28000, 4]))
 
         # The observation will be the state of the data centers
         server_data = Dict({
@@ -75,7 +77,7 @@ class ServerFleetEnv(gym.Env):
         })
         server_info = Dict({
             "generation": Discrete(num_server_gens),
-            "release_time": Tuple(Discrete(168), Discrete(168)),
+            "release_time": Tuple([Discrete(168)] * 2),
             "selling_price": Box(low=0, high=3000, shape=(1,), dtype=float),
             "purchase_price": Box(low=1, high=200000, shape=(1,), dtype=float),
             "slots_size": Box(low=1, high=5, shape=(1,), dtype=int),
@@ -144,17 +146,17 @@ class ServerFleetEnv(gym.Env):
         # Combine all server ids
         combined_server_ids = {server_id for dc in self.data_centers for server_id in dc["servers_dict"].keys()}
         for action in actions:
-            act, sid, dcid, sgen = action["action"], action["server_id"], action["datacenter_id"], action["server_generation"]
+            dcid, sgen, sid, act = action[1], action[2], action[3], action[4]
             center = self.data_centers[dcid]
             server_info = self.server_info[sgen]
             if (act == 0 and sid in combined_server_ids) \
             or (act == 1 and sid not in combined_server_ids) \
             or (act == 2 and sid not in center["servers_dict"].keys()) \
-            or action["time_step"] != self.time_step \
+            or action[0] != self.time_step \
             or center["remaining_slots"] < server_info["slots_size"] \
-            or act == 0 and self.time_step not in server_info["release_time"] \
-            or act == 1 and action["server_id"] in center["servers_dict"].keys() \
-            or act == 1 and center["remaining_slots"] < server_info["slots_size"]:
+            or (act == 0 and self.time_step not in server_info["release_time"]) \
+            or (act == 1 and sid in center["servers_dict"].keys()) \
+            or (act == 1 and center["remaining_slots"] < server_info["slots_size"]):
                 return False
         return True 
 
@@ -212,14 +214,14 @@ class ServerFleetEnv(gym.Env):
         truncated = False  # we do not limit the number of steps here
 
         # Apply all actions
-        center = self.data_centers[action["datacenter_id"]]
-        sid, sgen = action["server_id"], action["server_generation"]
         for action in actions:
-            if action["action"] == 0:
+            center = self.data_centers[action[1]]
+            sgen, sid, act = action[2], action[3], action[4]
+            if act == 0:
                 server = [action["server_generation"], 0]
                 center["servers_dict"][sid] = server
                 center["remaining_slots"] -= self.server_info[sgen]["slots_size"]
-            elif action["action"] == 1:
+            elif act == 1:
                 # Find the server in the source data center and remove it
                 server = None
                 for src_center in self.data_centers:
@@ -230,7 +232,7 @@ class ServerFleetEnv(gym.Env):
                 # Add server to destination data center
                 center["servers_dict"][sid] = server
                 center["remaining_slots"] -= self.server_info[sgen]["slots_size"]
-            elif action["action"] == 2: # dismiss
+            elif act == 2: # dismiss
                 # Remove server id from set
                 center["servers_dict"].pop(sid)
 
@@ -259,8 +261,9 @@ class ServerFleetEnv(gym.Env):
         )
 
     def render(self):
-        print("State: ", self._get_obs())
-        print("Fleet: ", self.fleet)
+        print("Timestep:", self.time_step)
+        print("State:", self._get_obs())
+        print("Fleet:", self.fleet)
 
     def close(self):
         pass
