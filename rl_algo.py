@@ -8,10 +8,10 @@ from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.utils import set_random_seed
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.callbacks import CheckpointCallback
-from utils import load_problem_data, save_solution, save_json
+from utils import load_problem_data, save_solution
 from evaluation import get_actual_demand
 from seeds import known_seeds
-from custom_rl_env import format_actions
+from custom_rl_env import map_actions
 
 # For more examples, refer to https://stable-baselines3.readthedocs.io/en/master/guide/examples.html
 
@@ -40,8 +40,8 @@ def make_env(env_id: str, rank: int, seed: int = 0):
     def _init():
         env = gym.make(env_id, datacenters=datacenters, demands=demands, servers=servers, selling_prices=selling_prices)
         env.reset(seed=seed + rank)
-        wrapped_env = FlattenObservation(env)
-        check_env(wrapped_env)
+        # wrapped_env = FlattenObservation(env)
+        check_env(env)
         return env
     
     set_random_seed(seed)
@@ -97,7 +97,7 @@ if __name__ == '__main__':
         for _ in range(168):
             actions, _states = model.predict(obs)
             obs, reward, terminated, truncated, info = vec_env.step(actions)
-            actions = format_actions(actions)
+            actions = map_actions(actions)
             solution.append(actions)
             objective += reward
             vec_env.render()
