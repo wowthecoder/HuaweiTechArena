@@ -54,8 +54,8 @@ if __name__ == '__main__':
     # Print the device
     print(f"Model is using device: {model.device}")
 
-    # Create a checkpoint callback to save the model every 1000 steps
-    checkpoint_callback = CheckpointCallback(save_freq=1000, save_path='./rl-logs/', name_prefix='ppo_checkpoint')
+    # Create a checkpoint callback to save the model every 10000 steps
+    checkpoint_callback = CheckpointCallback(save_freq=10000, save_path='./rl-logs/', name_prefix='ppo_checkpoint')
 
     # To resume training from a checkpoint, uncomment the code below:
     # Directory where checkpoints are saved
@@ -77,13 +77,13 @@ if __name__ == '__main__':
     # # Resume training
     # model.learn(total_timesteps=10000)
 
-    # Train 100 times
-    model.learn(total_timesteps=100000, callback=checkpoint_callback)
-    model.save("ppo_model_v1")
+    # Each episode takes about 15k - 25k actions
+    model.learn(total_timesteps=int(1e6), callback=checkpoint_callback)
+    model.save("ppo_v1")
 
     # Later, load the model and resume training
     # The model continues learning from where it left off
-    # model = PPO.load("ppo_model_v1", env=env)
+    # model = PPO.load("ppo_v1", env=env)
     # model.learn(total_timesteps=10000)
 
     obs, info = vec_env.reset()

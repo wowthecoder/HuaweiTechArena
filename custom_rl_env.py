@@ -10,10 +10,22 @@ num_server_gens = 7
 num_timesteps = 168
 max_servers = 28000
 max_demands_per_timestep = num_server_gens
+max_num_actions = 30000
 
 def map_action(action):
     action_map = ["buy", "move", "dismiss"]
     sgen_map = ["CPU.S1", "CPU.S2", "CPU.S3", "CPU.S4", "GPU.S1", "GPU.S2", "GPU.S3"]
+    # Scale it back to the original discrete action space
+    # Convert from [-1, 1] to [0, 1]
+    scaled_action = (action + 1) / 2
+    original_action = np.array([
+        round(scaled_action[0] * num_timesteps),  # Map to [0, num_timesteps]
+        round(scaled_action[1] * 3),  # Map to [0, 3] (4 possible values)
+        round(scaled_action[2] * (num_server_gens - 1)),  # Map to [0, num_server_gens - 1]
+        round(scaled_action[3] * (max_servers - 1)),  # Map to [0, 27999] (28000 possible values)
+        round(scaled_action[4] * 3),  # Map to [0, 3] (4 possible values)
+        round(scaled_action[5] * 1)  # Map to [0, 1] (2 possible values)
+    ])
     if action[4] != 3: # If the action is not "hold"
         return {
             "time_step": action[0],
@@ -31,6 +43,7 @@ class ServerFleetEnv(gym.Env):
     def _init_state(self, datacenters, demands, servers, selling_prices):
         self.datacenters = datacenters
         self.time_step = 1
+        self.num_actions = 0 # used for truncation
 
         self.servers = servers
         self.selling_prices = selling_prices
@@ -60,39 +73,45 @@ class ServerFleetEnv(gym.Env):
         #     "action": Discrete(4) # 0: buy, 1: move, 2: dismiss, 3: hold
         #     "continue": Discrete(2) # 0: stay in current time step, 1: next time step
         # }))
-        self.action_space = MultiDiscrete([num_timesteps + 1, 4, num_server_gens, 28000, 4, 2])
+        # According to the Tips and Tricks page of Stable Baselines3 docs, it is recommended to rescale action space to [-1, 1]
+        # self.action_space = MultiDiscrete([num_timesteps + 1, 4, num_server_gens, max_servers, 4, 2])
+        self.action_space = Box(
+            low=np.array([-1, -1, -1, -1, -1, -1], dtype=np.float32), 
+            high=np.array([1, 1, 1, 1, 1, 1], dtype=np.float32)
+        )
 
         # Pad the entries with zero because gym.spaces.Sequence is not supported by stable baselines3
         # Nested observation spaces are not supported (Tuple/Dict space inside Tuple/Dict space)
-        # Hence we omit the cost column and map the cost_of_energy column to integers in ascending order
+        # Normalise every column, remove constant columns like life_expectancy and cost_of_moving
+        demand_col = Box(low=-1, high=1, shape=(max_demands_per_timestep,), dtype=np.float32)
+        fleet_col = Box(low=-1, high=1, shape=(max_servers,), dtype=np.float32)
         self.observation_space = Dict({
             # demand data
-            "demand_generation": MultiDiscrete([num_server_gens] * max_demands_per_timestep),
-            "high": MultiDiscrete([int(1e6)] * max_demands_per_timestep),
-            "medium": MultiDiscrete([int(1e6)] * max_demands_per_timestep),
-            "low": MultiDiscrete([int(1e6)] * max_demands_per_timestep),
+            "demand_generation": demand_col,
+            "high": demand_col,
+            "medium": demand_col,
+            "low": demand_col,
             "time_step": Discrete(num_timesteps),
             # fleet state
-            "datacenter_id": MultiDiscrete([4] * max_servers),
-            "server_generation": MultiDiscrete([num_server_gens] * max_servers),
-            "server_id": MultiDiscrete([max_servers] * max_servers),
-            "action": MultiDiscrete([4] * max_servers),
-            "server_type": MultiDiscrete([2] * max_servers),
-            "release_time_1": MultiDiscrete([num_timesteps + 1] * max_servers),
-            "release_time_2": MultiDiscrete([num_timesteps + 1] * max_servers),
-            "purchase_price": MultiDiscrete([20000] * max_servers),
-            "slots_size": MultiDiscrete([5] * max_servers),
-            "energy_consumption": MultiDiscrete([5000] * max_servers),
-            "capacity": MultiDiscrete([160] * max_servers),
-            "life_expectancy": Discrete(97), # all 96
-            "cost_of_moving": Discrete(1001), # all 1000
-            "average_maintenance_fee": MultiDiscrete([3100] * max_servers),
-            "cost_of_energy": MultiDiscrete([4] * max_servers), # only 4 possible float values
-            "latency_sensitivity": MultiDiscrete([3] * max_servers),
-            "slots_capacity": MultiDiscrete([26000] * max_servers),
-            "selling_price": MultiDiscrete([3000] * max_servers),
-            "lifespan": MultiDiscrete([100] * max_servers),
-            "moved": MultiDiscrete([2] * max_servers),
+            "datacenter_id": fleet_col,
+            "server_generation": fleet_col,
+            "server_id": fleet_col,
+            "action": fleet_col,
+            "server_type": fleet_col,
+            "release_time_1": fleet_col,
+            "release_time_2": fleet_col,
+            "purchase_price": fleet_col,
+            "slots_size": fleet_col,
+            "energy_consumption": fleet_col,
+            "capacity": fleet_col,
+            "average_maintenance_fee": fleet_col,
+            "cost_of_energy": fleet_col,
+            "latency_sensitivity": fleet_col,
+            "slots_capacity": fleet_col,
+            "selling_price": fleet_col,
+            "lifespan": fleet_col,
+            "moved": fleet_col,
+            "cost": fleet_col,
         })
 
     def _get_obs(self):
@@ -103,14 +122,13 @@ class ServerFleetEnv(gym.Env):
         demand_ts["demand_generation"] = demand_ts["server_generation"].map(sgen_map)
         # format: {'server_generation': ['CPU.S1', 'GPU.S1'], 'high': [172, 83], 'low': [36228, 13], 'medium': [5735, 35]}
         demand_dict = demand_ts.drop(columns=["time_step", "server_generation"], inplace=False).to_dict(orient='list')
+        # Before padding, 
         # Pad the demand_list with empty dicts
         padding = [0] * (max_demands_per_timestep - len(demand_ts))
         for k in demand_dict.keys():
             obs[k] = demand_dict[k] + padding
 
         obs["time_step"] = self.time_step 
-        obs["life_expectancy"] = 96
-        obs["cost_of_moving"] = 1000
 
         # If fleet is empty (just after reset, return an empty dictionary)
         if self.fleet.empty:
@@ -149,7 +167,7 @@ class ServerFleetEnv(gym.Env):
             obs2["latency_sensitivity"] = obs2["latency_sensitivity"].map(latency_map)
             obs2[["release_time1", "release_time2"]] = obs2["release_time"].str.strip('[]').str.split(',', expand=True)
             obs2["cost_of_energy"] = obs2["cost_of_energy"].map(energycost_map)
-            obs2.drop(columns=["release_time", "life_expectancy", "cost"], inplace=True)
+            obs2.drop(columns=["release_time", "life_expectancy", "cost_of_moving"], inplace=True)
             obs2 = obs2.to_dict(orient='list')
 
         # Pad all entries with zeroes up to max_servers
@@ -220,7 +238,8 @@ class ServerFleetEnv(gym.Env):
 
     def step(self, action):
         terminated = bool(self.time_step == num_timesteps)
-        truncated = False  # we do not limit the number of steps here
+        truncated = self.num_actions > max_num_actions
+        self.num_actions += 1
 
         # Check if action is valid
         # if not self.is_action_valid(action):
@@ -249,6 +268,8 @@ class ServerFleetEnv(gym.Env):
             self.fleet = new_fleet 
         except ValueError as ve:
             reward = -10.0
+            if action[5] == 1:
+                self.time_step += 1
             return self._get_obs(), reward, terminated, truncated, {}
 
         reward = self.calculate_reward()
