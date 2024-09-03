@@ -11,7 +11,7 @@ from stable_baselines3.common.callbacks import CheckpointCallback
 from utils import load_problem_data, save_solution
 from evaluation import get_actual_demand
 from seeds import known_seeds
-from custom_rl_env import map_actions
+from custom_rl_env import map_action
 
 # For more examples, refer to https://stable-baselines3.readthedocs.io/en/master/guide/examples.html
 
@@ -41,7 +41,7 @@ def make_env(env_id: str, rank: int, seed: int = 0):
         env = gym.make(env_id, datacenters=datacenters, demands=demands, servers=servers, selling_prices=selling_prices)
         env.reset(seed=seed + rank)
         # wrapped_env = FlattenObservation(env)
-        check_env(env)
+        # check_env(env)
         return env
     
     set_random_seed(seed)
@@ -50,12 +50,12 @@ def make_env(env_id: str, rank: int, seed: int = 0):
 if __name__ == '__main__':
     # Create the model
     vec_env = SubprocVecEnv([make_env("ServerFleetEnv", i) for i in range(num_cpu)])
-    model = PPO("MlpPolicy", vec_env, verbose=1)
+    model = PPO("MultiInputPolicy", vec_env, verbose=1)
     # Print the device
     print(f"Model is using device: {model.device}")
 
-    # Create a checkpoint callback to save the model every 1680 steps (10 iterations)
-    checkpoint_callback = CheckpointCallback(save_freq=1680, save_path='./rl-logs/', name_prefix='ppo_checkpoint')
+    # Create a checkpoint callback to save the model every 1000 steps
+    checkpoint_callback = CheckpointCallback(save_freq=1000, save_path='./rl-logs/', name_prefix='ppo_checkpoint')
 
     # To resume training from a checkpoint, uncomment the code below:
     # Directory where checkpoints are saved
@@ -78,7 +78,7 @@ if __name__ == '__main__':
     # model.learn(total_timesteps=10000)
 
     # Train 100 times
-    model.learn(total_timesteps=16800, callback=checkpoint_callback)
+    model.learn(total_timesteps=100000, callback=checkpoint_callback)
     model.save("ppo_model_v1")
 
     # Later, load the model and resume training
@@ -94,17 +94,20 @@ if __name__ == '__main__':
     for seed in training_seeds:
         objective = 0
         solution = []
-        for _ in range(168):
-            actions, _states = model.predict(obs)
-            obs, reward, terminated, truncated, info = vec_env.step(actions)
-            actions = map_actions(actions)
-            solution.append(actions)
+        while True:
+            action, _states = model.predict(obs)
+            obs, reward, terminated, truncated, info = vec_env.step(action)
+            action = map_action(action)
+            if action: # if action is not hold
+                solution.append(action)
             objective += reward
             vec_env.render()
             # print a divider
             print("--" * 20)
+            if terminated or truncated:
+                break
 
         save_solution(solution, f"./output/{seed}.json")
         
-        print("Objective:", objective)
+        print(f"Objective for seed {seed} is: {objective}")
 
