@@ -156,7 +156,7 @@ class ServerFleetEnv(gym.Env):
             # Convert all the values in Fleet to numerical
             dcid_map = {"DC1": 1, "DC2": 2, "DC3": 3, "DC4": 4}
             sgen_map = {"CPU.S1": 0, "CPU.S2": 1, "CPU.S3": 2, "CPU.S4": 3, "GPU.S1": 4, "GPU.S2": 5, "GPU.S3": 6}
-            action_map = {"buy": 0, "move": 1, "dismiss": 2, "hold": 4}
+            action_map = {"buy": 0, "move": 1, "dismiss": 2, "hold": 3}
             stype_map = {"CPU": 0, "GPU": 1}
             latency_map = {"low": 0, "medium": 1, "high": 2}
             obs2 = self.fleet.copy()
@@ -186,6 +186,7 @@ class ServerFleetEnv(gym.Env):
         """
         super().reset(seed=seed, options=options)
         self.time_step = 1
+        self.num_actions = 0
         self.fleet = pd.DataFrame()
         # need to include the first demand in the first observation
         return self._get_obs(), {}
@@ -196,9 +197,9 @@ class ServerFleetEnv(gym.Env):
         # 4. Check if server move is valid ( the source datacenter has the server and the destination datacenter has enough slots)
         # 5. If move/dismiss, check if server generation matches id
 
-        # if fleet is empty, return true
+        # if fleet is empty, return true if action is buy
         if self.fleet.empty:
-            return True
+            return action["action"] == "buy"
 
         # Combine all server ids
         # combined_server_ids = {server_id for dc in self.data_centers for server_id in dc["servers_dict"].keys[]}
@@ -209,7 +210,6 @@ class ServerFleetEnv(gym.Env):
         if (act == 0 and sid in self.fleet["server_ids"]) \
         or (act == 1 and sid not in self.fleet["server_ids"]) \
         or (act == 2 and sid not in self.fleet["server_ids"]) \
-        or action["time_step"] != self.time_step \
         or (act == 0 and self.time_step not in rtimes) \
         or (act != 0 and sgen != self.fleet.loc[self.fleet["server_id"] == sid, 'server_generation'].values[0]):
             return False
@@ -243,7 +243,7 @@ class ServerFleetEnv(gym.Env):
         return reward
 
     def step(self, action):
-        terminated = bool(self.time_step == num_timesteps)
+        terminated = bool(self.time_step >= num_timesteps)
         truncated = self.num_actions > max_num_actions
         self.num_actions += 1
 
@@ -257,10 +257,10 @@ class ServerFleetEnv(gym.Env):
 
         # GET THE SERVERS DEPLOYED AT TIMESTEP ts
         # Check if constraints are obeyed
-        mapped_action = map_action(action)
+        mapped_action = map_action(action, self.time_step)
         if not self.is_action_valid(mapped_action):
             reward = -10.0
-            if action[5] > 0:
+            if action[4] > 0:
                 self.time_step += 1
             return self._get_obs(), reward, terminated, truncated, {}
         try:
@@ -279,13 +279,13 @@ class ServerFleetEnv(gym.Env):
             self.fleet = new_fleet 
         except ValueError as ve:
             reward = -10.0
-            if action[5] > 0:
+            if action[4] > 0:
                 self.time_step += 1
             return self._get_obs(), reward, terminated, truncated, {}
 
         reward = self.calculate_reward()
 
-        if action[5] > 0:
+        if action[4] > 0:
             self.time_step += 1
 
         # Optionally we can pass additional info, we are not using that for now

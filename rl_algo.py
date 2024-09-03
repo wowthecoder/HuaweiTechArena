@@ -55,7 +55,7 @@ if __name__ == '__main__':
     print(f"Number of cpus: {num_cpu}")
 
     # Create a checkpoint callback to save the model every 50000 steps
-    checkpoint_callback = CheckpointCallback(save_freq=50000//num_cpu, save_path='./rl_logs/ppo_v2/', name_prefix='ppo_checkpoint')
+    checkpoint_callback = CheckpointCallback(save_freq=50000//num_cpu, save_path='./rl_logs/ppo_v3/', name_prefix='ppo_checkpoint')
 
     # To resume training from a checkpoint, uncomment the code below:
     # Directory where checkpoints are saved
@@ -81,7 +81,7 @@ if __name__ == '__main__':
     print("\nTraining started")
     print("--" * 20)
     model.learn(total_timesteps=int(1e6), callback=checkpoint_callback)
-    model.save("ppo_v2")
+    model.save("ppo_v3")
 
     # Later, load the model and resume training
     # The model continues learning from where it left off
