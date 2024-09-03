@@ -1,0 +1,9 @@
+[
+    {
+        "time_step": 168,
+        "datacenter_id": "DC2",
+        "server_generation": "GPU.S2",
+        "server_id": 4711,
+        "action": "dismiss"
+    }
+]

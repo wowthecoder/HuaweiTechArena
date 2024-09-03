@@ -18,14 +18,13 @@ def map_action(action):
     # Scale it back to the original discrete action space
     # Convert from [-1, 1] to [0, 1]
     scaled_action = (action + 1) / 2
-    action = np.array([
+    action = [
         round(scaled_action[0] * (num_timesteps - 1)),  # Map to [0, num_timesteps-1]
         round(scaled_action[1] * 3),  # Map to [0, 3] (4 possible values)
         round(scaled_action[2] * (num_server_gens - 1)),  # Map to [0, num_server_gens - 1]
         round(scaled_action[3] * (max_servers - 1)),  # Map to [0, 27999] (28000 possible values)
         round(scaled_action[4] * 3),  # Map to [0, 3] (4 possible values)
-        round(scaled_action[5])  # Map to [0, 1] (2 possible values)
-    ])
+    ]
     if action[4] != 3: # If the action is not "hold"
         return {
             "time_step": action[0] + 1,

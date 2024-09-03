@@ -1,0 +1,30 @@
+[
+    {
+        "time_step": 1,
+        "datacenter_id": "DC3",
+        "server_generation": "CPU.S1",
+        "server_id": 10001,
+        "action": "move"
+    },
+    {
+        "time_step": 80,
+        "datacenter_id": "DC3",
+        "server_generation": "GPU.S3",
+        "server_id": 13899,
+        "action": "dismiss"
+    },
+    {
+        "time_step": 127,
+        "datacenter_id": "DC1",
+        "server_generation": "CPU.S2",
+        "server_id": 19455,
+        "action": "dismiss"
+    },
+    {
+        "time_step": 11,
+        "datacenter_id": "DC3",
+        "server_generation": "GPU.S3",
+        "server_id": 0,
+        "action": "dismiss"
+    }
+]
