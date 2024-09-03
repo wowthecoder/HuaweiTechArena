@@ -8,7 +8,7 @@ from evaluation import get_time_step_demand, get_time_step_fleet, update_fleet, 
 
 num_server_gens = 7
 num_timesteps = 168
-max_servers = 28000
+max_servers = 20000
 max_demands_per_timestep = num_server_gens
 max_num_actions = 30000
 
@@ -19,7 +19,7 @@ def map_action(action):
     # Convert from [-1, 1] to [0, 1]
     scaled_action = (action + 1) / 2
     original_action = np.array([
-        round(scaled_action[0] * num_timesteps),  # Map to [0, num_timesteps]
+        round(scaled_action[0] * (num_timesteps - 1)),  # Map to [0, num_timesteps-1]
         round(scaled_action[1] * 3),  # Map to [0, 3] (4 possible values)
         round(scaled_action[2] * (num_server_gens - 1)),  # Map to [0, num_server_gens - 1]
         round(scaled_action[3] * (max_servers - 1)),  # Map to [0, 27999] (28000 possible values)
@@ -28,7 +28,7 @@ def map_action(action):
     ])
     if action[4] != 3: # If the action is not "hold"
         return {
-            "time_step": action[0],
+            "time_step": action[0] + 1,
             "datacenter_id": f"DC{action[1]}",
             "server_generation": sgen_map[action[2]],
             "server_id": action[3],
@@ -41,15 +41,20 @@ class ServerFleetEnv(gym.Env):
     metadata = {"render_modes": ["console"]}
 
     def _init_state(self, datacenters, demands, servers, selling_prices):
-        self.datacenters = datacenters
+        self.datacenters = datacenters.copy()
         self.time_step = 1
         self.num_actions = 0 # used for truncation
 
-        self.servers = servers
-        self.selling_prices = selling_prices
+        self.servers = servers.copy()
+        self.selling_prices = selling_prices.copy()
         self.formatted_selling_prices = change_selling_prices_format(selling_prices)
 
-        self.demands = demands
+        self.demands = demands.copy()
+        sgen_map = {"CPU.S1": 0, "CPU.S2": 1, "CPU.S3": 2, "CPU.S4": 3, "GPU.S1": 4, "GPU.S2": 5, "GPU.S3": 6}
+        d2 = demands.copy()
+        d2["demand_generation"] = d2["server_generation"].map(sgen_map)
+        d2.drop(columns="server_generation", inplace=True)
+        self.normalised_demands = (d2 - d2.min()) / (d2.max() - d2.min())
 
         self.fleet = pd.DataFrame()
         
@@ -83,8 +88,8 @@ class ServerFleetEnv(gym.Env):
         # Pad the entries with zero because gym.spaces.Sequence is not supported by stable baselines3
         # Nested observation spaces are not supported (Tuple/Dict space inside Tuple/Dict space)
         # Normalise every column, remove constant columns like life_expectancy and cost_of_moving
-        demand_col = Box(low=-1, high=1, shape=(max_demands_per_timestep,), dtype=np.float32)
-        fleet_col = Box(low=-1, high=1, shape=(max_servers,), dtype=np.float32)
+        demand_col = Box(low=0, high=1, shape=(max_demands_per_timestep,), dtype=np.float32)
+        fleet_col = Box(low=0, high=1, shape=(max_servers,), dtype=np.float32)
         self.observation_space = Dict({
             # demand data
             "demand_generation": demand_col,
@@ -116,13 +121,11 @@ class ServerFleetEnv(gym.Env):
 
     def _get_obs(self):
         obs = {}
-        sgen_map = {"CPU.S1": 0, "CPU.S2": 1, "CPU.S3": 2, "CPU.S4": 3, "GPU.S1": 4, "GPU.S2": 5, "GPU.S3": 6}
 
         demand_ts = self.demands.loc[self.demands["time_step"] == self.time_step].copy() 
-        demand_ts["demand_generation"] = demand_ts["server_generation"].map(sgen_map)
+        normalised_demand_ts = self.normalised_demands.loc[demand_ts.index].copy()
         # format: {'server_generation': ['CPU.S1', 'GPU.S1'], 'high': [172, 83], 'low': [36228, 13], 'medium': [5735, 35]}
-        demand_dict = demand_ts.drop(columns=["time_step", "server_generation"], inplace=False).to_dict(orient='list')
-        # Before padding, 
+        demand_dict = normalised_demand_ts.drop(columns=["time_step"], inplace=False).to_dict(orient='list')
         # Pad the demand_list with empty dicts
         padding = [0] * (max_demands_per_timestep - len(demand_ts))
         for k in demand_dict.keys():
@@ -151,14 +154,15 @@ class ServerFleetEnv(gym.Env):
                 "selling_price": [],
                 "lifespan": [],
                 "moved": [],
+                "cost": []
             }
         else:
             # Convert all the values in Fleet to numerical
             dcid_map = {"DC1": 1, "DC2": 2, "DC3": 3, "DC4": 4}
+            sgen_map = {"CPU.S1": 0, "CPU.S2": 1, "CPU.S3": 2, "CPU.S4": 3, "GPU.S1": 4, "GPU.S2": 5, "GPU.S3": 6}
             action_map = {"buy": 0, "move": 1, "dismiss": 2, "hold": 4}
             stype_map = {"CPU": 0, "GPU": 1}
             latency_map = {"low": 0, "medium": 1, "high": 2}
-            energycost_map = {0.25: 0, 0.35: 1, 0.65: 1, 0.75: 1}
             obs2 = self.fleet.copy()
             obs2["datacenter_id"] = obs2["datacenter_id"].map(dcid_map)
             obs2["server_generation"] = obs2["server_generation"].map(sgen_map)
@@ -166,8 +170,10 @@ class ServerFleetEnv(gym.Env):
             obs2["server_type"] = obs2["server_type"].map(stype_map)
             obs2["latency_sensitivity"] = obs2["latency_sensitivity"].map(latency_map)
             obs2[["release_time1", "release_time2"]] = obs2["release_time"].str.strip('[]').str.split(',', expand=True)
-            obs2["cost_of_energy"] = obs2["cost_of_energy"].map(energycost_map)
+            obs2[["release_time1", "release_time2"]] = obs2[["release_time1", "release_time2"]].astype(int)
             obs2.drop(columns=["release_time", "life_expectancy", "cost_of_moving"], inplace=True)
+            # Normalise all columns
+            obs2 = (obs2 - obs2.min()) / (obs2.max() - obs2.min())
             obs2 = obs2.to_dict(orient='list')
 
         # Pad all entries with zeroes up to max_servers
