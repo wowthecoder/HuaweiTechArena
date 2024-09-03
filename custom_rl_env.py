@@ -23,18 +23,15 @@ def map_action(action):
         round(scaled_action[1] * 3),  # Map to [0, 3] (4 possible values)
         round(scaled_action[2] * (num_server_gens - 1)),  # Map to [0, num_server_gens - 1]
         round(scaled_action[3] * (max_servers - 1)),  # Map to [0, 27999] (28000 possible values)
-        round(scaled_action[4] * 3),  # Map to [0, 3] (4 possible values)
+        round(scaled_action[4] * 2),  # Map to [0, 2] (3 possible values)
     ]
-    if action[4] != 3: # If the action is not "hold"
-        return {
-            "time_step": action[0] + 1,
-            "datacenter_id": f"DC{action[1]}",
-            "server_generation": sgen_map[action[2]],
-            "server_id": action[3],
-            "action": action_map[action[4]]
-        }
-    
-    return None
+    return {
+        "time_step": action[0] + 1,
+        "datacenter_id": f"DC{action[1]}",
+        "server_generation": sgen_map[action[2]],
+        "server_id": action[3],
+        "action": action_map[action[4]]
+    }
 
 class ServerFleetEnv(gym.Env):
     metadata = {"render_modes": ["console"]}
@@ -201,17 +198,16 @@ class ServerFleetEnv(gym.Env):
 
         # Combine all server ids
         # combined_server_ids = {server_id for dc in self.data_centers for server_id in dc["servers_dict"].keys[]}
-        sgen_map = ["CPU.S1", "CPU.S2", "CPU.S3", "CPU.S4", "GPU.S1", "GPU.S2", "GPU.S3"]
-        dcid, sgen, sid, act = action[1], action[2], action[3], action[4]
+        dcid, sgen, sid, act = action["datacenter_id"], action["server_generation"], action["server_id"], action["action"]
         rtimes = list(map(int, self.servers.loc[sgen, 'release_time'].strip('[]').split(',')))
         # center = self.data_centers[dcid]
         # server_info = self.server_info[sgen]
         if (act == 0 and sid in self.fleet["server_ids"]) \
         or (act == 1 and sid not in self.fleet["server_ids"]) \
         or (act == 2 and sid not in self.fleet["server_ids"]) \
-        or action[0] != self.time_step \
+        or action["time_step"] != self.time_step \
         or (act == 0 and self.time_step not in rtimes) \
-        or (act != 0 and sgen_map[sgen] != self.fleet.loc[self.fleet["server_id"] == sid, 'server_generation'].values[0]):
+        or (act != 0 and sgen != self.fleet.loc[self.fleet["server_id"] == sid, 'server_generation'].values[0]):
             return False
         
         return True 
@@ -258,26 +254,30 @@ class ServerFleetEnv(gym.Env):
         # GET THE SERVERS DEPLOYED AT TIMESTEP ts
         # Check if constraints are obeyed
         mapped_action = map_action(action)
-        if mapped_action: # if it is hold action, don't need to update fleet
-            try:
-                solution = solution_data_preparation(pd.DataFrame(mapped_action), self.servers, self.datacenters, self.selling_prices)
-                ts_fleet = get_time_step_fleet(solution, self.time_step)
+        if not self.is_action_valid(mapped_action):
+            reward = -10.0
+            if action[5] > 0:
+                self.time_step += 1
+            return self._get_obs(), reward, terminated, truncated, {}
+        try:
+            solution = solution_data_preparation(pd.DataFrame(mapped_action), self.servers, self.datacenters, self.selling_prices)
+            ts_fleet = get_time_step_fleet(solution, self.time_step)
 
-                if ts_fleet.empty and not self.fleet.empty:
-                    ts_fleet = self.fleet
-                elif ts_fleet.empty and self.fleet.empty:
-                    return 0
+            if ts_fleet.empty and not self.fleet.empty:
+                ts_fleet = self.fleet
+            elif ts_fleet.empty and self.fleet.empty:
+                return 0
 
-                # UPDATE FLEET
-                new_fleet = update_fleet(self.time_step, self.fleet, ts_fleet)
+            # UPDATE FLEET
+            new_fleet = update_fleet(self.time_step, self.fleet, ts_fleet)
 
-                check_datacenter_slots_size_constraint(new_fleet)
-                self.fleet = new_fleet 
-            except ValueError as ve:
-                reward = -10.0
-                if action[5] > 0:
-                    self.time_step += 1
-                return self._get_obs(), reward, terminated, truncated, {}
+            check_datacenter_slots_size_constraint(new_fleet)
+            self.fleet = new_fleet 
+        except ValueError as ve:
+            reward = -10.0
+            if action[5] > 0:
+                self.time_step += 1
+            return self._get_obs(), reward, terminated, truncated, {}
 
         reward = self.calculate_reward()
 
