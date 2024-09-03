@@ -52,10 +52,10 @@ if __name__ == '__main__':
     vec_env = SubprocVecEnv([make_env("ServerFleetEnv", i) for i in range(num_cpu)])
     model = PPO("MultiInputPolicy", vec_env, verbose=1)
     # Print the device
-    print(f"Model is using device: {model.device}")
+    print(f"Number of cpus: {num_cpu}")
 
-    # Create a checkpoint callback to save the model every 10000 steps
-    checkpoint_callback = CheckpointCallback(save_freq=10000, save_path='./rl-logs/', name_prefix='ppo_checkpoint')
+    # Create a checkpoint callback to save the model every 50000 steps
+    checkpoint_callback = CheckpointCallback(save_freq=50000//num_cpu, save_path='./rl-logs/', name_prefix='ppo_checkpoint')
 
     # To resume training from a checkpoint, uncomment the code below:
     # Directory where checkpoints are saved

@@ -18,13 +18,13 @@ def map_action(action):
     # Scale it back to the original discrete action space
     # Convert from [-1, 1] to [0, 1]
     scaled_action = (action + 1) / 2
-    original_action = np.array([
+    action = np.array([
         round(scaled_action[0] * (num_timesteps - 1)),  # Map to [0, num_timesteps-1]
         round(scaled_action[1] * 3),  # Map to [0, 3] (4 possible values)
         round(scaled_action[2] * (num_server_gens - 1)),  # Map to [0, num_server_gens - 1]
         round(scaled_action[3] * (max_servers - 1)),  # Map to [0, 27999] (28000 possible values)
         round(scaled_action[4] * 3),  # Map to [0, 3] (4 possible values)
-        round(scaled_action[5] * 1)  # Map to [0, 1] (2 possible values)
+        round(scaled_action[5])  # Map to [0, 1] (2 possible values)
     ])
     if action[4] != 3: # If the action is not "hold"
         return {
@@ -220,6 +220,7 @@ class ServerFleetEnv(gym.Env):
     def calculate_reward(self):
         # GET THE ACTUAL DEMAND AT TIMESTEP ts
         D = get_time_step_demand(self.demands, self.time_step)
+        reward = 0
   
         # CHECK IF THE FLEET IS EMPTY
         if self.fleet.shape[0] > 0:
@@ -257,34 +258,35 @@ class ServerFleetEnv(gym.Env):
 
         # GET THE SERVERS DEPLOYED AT TIMESTEP ts
         # Check if constraints are obeyed
-        try: 
-            mapped_action = map_action(action)
-            solution = solution_data_preparation(pd.DataFrame(mapped_action), self.servers, self.datacenters, self.selling_prices)
-            ts_fleet = get_time_step_fleet(solution, self.time_step)
+        mapped_action = map_action(action)
+        if mapped_action: # if it is hold action, don't need to update fleet
+            try:
+                solution = solution_data_preparation(pd.DataFrame(mapped_action), self.servers, self.datacenters, self.selling_prices)
+                ts_fleet = get_time_step_fleet(solution, self.time_step)
 
-            if ts_fleet.empty and not self.fleet.empty:
-                ts_fleet = self.fleet
-            elif ts_fleet.empty and self.fleet.empty:
-                return 0
+                if ts_fleet.empty and not self.fleet.empty:
+                    ts_fleet = self.fleet
+                elif ts_fleet.empty and self.fleet.empty:
+                    return 0
 
-            # UPDATE FLEET
-            new_fleet = update_fleet(self.time_step, self.fleet, ts_fleet)
+                # UPDATE FLEET
+                new_fleet = update_fleet(self.time_step, self.fleet, ts_fleet)
 
-            check_datacenter_slots_size_constraint(new_fleet)
-            self.fleet = new_fleet 
-        except ValueError as ve:
-            reward = -10.0
-            if action[5] == 1:
-                self.time_step += 1
-            return self._get_obs(), reward, terminated, truncated, {}
+                check_datacenter_slots_size_constraint(new_fleet)
+                self.fleet = new_fleet 
+            except ValueError as ve:
+                reward = -10.0
+                if action[5] > 0:
+                    self.time_step += 1
+                return self._get_obs(), reward, terminated, truncated, {}
 
         reward = self.calculate_reward()
 
+        if action[5] > 0:
+            self.time_step += 1
+
         # Optionally we can pass additional info, we are not using that for now
         info = {}
-
-        if action[5] == 1:
-            self.time_step += 1
 
         return (self._get_obs(), reward, terminated, truncated, info)
 
