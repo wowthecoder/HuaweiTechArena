@@ -1,9 +1,9 @@
 [
     {
-        "time_step": 168,
+        "time_step": 8,
         "datacenter_id": "DC2",
-        "server_generation": "GPU.S2",
-        "server_id": 4711,
-        "action": "dismiss"
+        "server_generation": "GPU.S3",
+        "server_id": 11798,
+        "action": "buy"
     }
 ]

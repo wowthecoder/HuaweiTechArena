@@ -23,7 +23,7 @@ obs, info = env.reset()
 # Get the best score 
 # To resume training from a checkpoint, uncomment the code below:
 # Directory where checkpoints are saved
-checkpoint_dir = './rl-logs/'
+checkpoint_dir = './rl_logs/ppo_v2'
 
 # List all files in the checkpoint directory
 checkpoint_files = [f for f in os.listdir(checkpoint_dir) if f.endswith('.zip')]
@@ -51,6 +51,7 @@ for seed in training_seeds:
             solution.append(action)
             print(action)
         objective += reward
+        print(reward)
         # print a divider
         print("--" * 20)
         if terminated or truncated:

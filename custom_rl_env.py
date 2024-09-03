@@ -12,25 +12,26 @@ max_servers = 20000
 max_demands_per_timestep = num_server_gens
 max_num_actions = 30000
 
-def map_action(action):
+def map_action(action, timestep):
     action_map = ["buy", "move", "dismiss"]
     sgen_map = ["CPU.S1", "CPU.S2", "CPU.S3", "CPU.S4", "GPU.S1", "GPU.S2", "GPU.S3"]
     # Scale it back to the original discrete action space
     # Convert from [-1, 1] to [0, 1]
     scaled_action = (action + 1) / 2
     action = [
-        round(scaled_action[0] * (num_timesteps - 1)),  # Map to [0, num_timesteps-1]
-        round(scaled_action[1] * 3),  # Map to [0, 3] (4 possible values)
-        round(scaled_action[2] * (num_server_gens - 1)),  # Map to [0, num_server_gens - 1]
-        round(scaled_action[3] * (max_servers - 1)),  # Map to [0, 27999] (28000 possible values)
-        round(scaled_action[4] * 2),  # Map to [0, 2] (3 possible values)
+        round(scaled_action[0] * 3),  # Map to [0, 3] (4 possible values)
+        round(scaled_action[1] * (num_server_gens - 1)),  # Map to [0, num_server_gens - 1]
+        round(scaled_action[2] * (max_servers - 1)),  # Map to [0, 27999] (28000 possible values)
+        round(scaled_action[3] * 2),  # Map to [0, 2] (3 possible values)
+        round(scaled_action[4])
     ]
     return {
-        "time_step": action[0] + 1,
-        "datacenter_id": f"DC{action[1]}",
-        "server_generation": sgen_map[action[2]],
-        "server_id": action[3],
-        "action": action_map[action[4]]
+        "time_step": timestep,
+        "datacenter_id": f"DC{action[0] + 1}",
+        "server_generation": sgen_map[action[1]],
+        "server_id": action[2],
+        "action": action_map[action[3]],
+        "nextstep": action[4]
     }
 
 class ServerFleetEnv(gym.Env):
@@ -67,7 +68,6 @@ class ServerFleetEnv(gym.Env):
         # Hold action is included because a Tuple must return at least one action, but sometimes we want to do nothing at a time step
         # Dictionary action space is not supported, but leaving the commented code here for description 
         # self.action_space = Dict({
-        #     "time_step": Discrete(168), 
         #     "datacenter_id": Discrete(4), # 0: DC1, 1: DC2, 2: DC3, 3: DC4
         #     "server_generation": Discrete(num_server_gens), # 0: CPU.S1, 1: CPU.S2, 2: CPU.S3, 3: CPU.S4, 4: GPU.S1, 5: GPU.S2, 6: GPU.S3
         #     "server_id": Discrete(28000), # max 28000 servers ( Total 55845 slots across all data centers, min 2 slots per server)
@@ -75,10 +75,10 @@ class ServerFleetEnv(gym.Env):
         #     "continue": Discrete(2) # 0: stay in current time step, 1: next time step
         # }))
         # According to the Tips and Tricks page of Stable Baselines3 docs, it is recommended to rescale action space to [-1, 1]
-        # self.action_space = MultiDiscrete([num_timesteps + 1, 4, num_server_gens, max_servers, 4, 2])
+        # we update the timestep ourselves, don't let the model learn
         self.action_space = Box(
-            low=np.array([-1, -1, -1, -1, -1, -1], dtype=np.float32), 
-            high=np.array([1, 1, 1, 1, 1, 1], dtype=np.float32)
+            low=np.array([-1, -1, -1, -1, -1], dtype=np.float32), 
+            high=np.array([1, 1, 1, 1, 1], dtype=np.float32)
         )
 
         # Pad the entries with zero because gym.spaces.Sequence is not supported by stable baselines3
@@ -196,10 +196,14 @@ class ServerFleetEnv(gym.Env):
         # 4. Check if server move is valid ( the source datacenter has the server and the destination datacenter has enough slots)
         # 5. If move/dismiss, check if server generation matches id
 
+        # if fleet is empty, return true
+        if self.fleet.empty:
+            return True
+
         # Combine all server ids
         # combined_server_ids = {server_id for dc in self.data_centers for server_id in dc["servers_dict"].keys[]}
         dcid, sgen, sid, act = action["datacenter_id"], action["server_generation"], action["server_id"], action["action"]
-        rtimes = list(map(int, self.servers.loc[sgen, 'release_time'].strip('[]').split(',')))
+        rtimes = list(map(int, self.servers.loc[self.fleet["server_generation"] == sgen, 'release_time'].strip('[]').split(',')))
         # center = self.data_centers[dcid]
         # server_info = self.server_info[sgen]
         if (act == 0 and sid in self.fleet["server_ids"]) \

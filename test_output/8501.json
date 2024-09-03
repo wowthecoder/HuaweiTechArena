@@ -1,1 +1,9 @@
-[]
+[
+    {
+        "time_step": 55,
+        "datacenter_id": "DC2",
+        "server_generation": "GPU.S2",
+        "server_id": 16764,
+        "action": "dismiss"
+    }
+]

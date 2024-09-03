@@ -78,6 +78,8 @@ if __name__ == '__main__':
     # model.learn(total_timesteps=10000)
 
     # Each episode takes about 15k - 25k actions
+    print("\nTraining started")
+    print("--" * 20)
     model.learn(total_timesteps=int(1e6), callback=checkpoint_callback)
     model.save("ppo_v2")
 
@@ -94,12 +96,14 @@ if __name__ == '__main__':
     for seed in training_seeds:
         objective = 0
         solution = []
-        while True:
+        timestep = 1
+        while timestep < 169:
             action, _states = model.predict(obs)
             obs, reward, terminated, truncated, info = vec_env.step(action)
-            action = map_action(action)
-            if action: # if action is not hold
-                solution.append(action)
+            action = map_action(action, timestep)
+            nextstep = action.pop("nextstep")
+            solution.append(action)
+            timestep += nextstep 
             objective += reward
             print(action)
             # print a divider

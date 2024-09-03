@@ -1,1 +1,9 @@
-[]
+[
+    {
+        "time_step": 1,
+        "datacenter_id": "DC0",
+        "server_generation": "CPU.S3",
+        "server_id": 2391,
+        "action": "dismiss"
+    }
+]

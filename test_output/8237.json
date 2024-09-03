@@ -1,1 +1,9 @@
-[]
+[
+    {
+        "time_step": 42,
+        "datacenter_id": "DC3",
+        "server_generation": "CPU.S1",
+        "server_id": 0,
+        "action": "buy"
+    }
+]
