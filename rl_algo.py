@@ -26,7 +26,7 @@ gym.envs.registration.register(
 demands, datacenters, servers, selling_prices = load_problem_data()
 
 demands = get_actual_demand(demands, seed=1061)
-demands.to_csv('./rl_data/actual_demand_1061.csv', index=False)
+# demands.to_csv('./rl_data/actual_demand_1061.csv', index=False)
 num_cpu = os.cpu_count()
 
 def make_env(env_id: str, rank: int, seed: int = 0):
@@ -49,13 +49,14 @@ def make_env(env_id: str, rank: int, seed: int = 0):
 
 if __name__ == '__main__':
     # Create the model
-    vec_env = SubprocVecEnv([make_env("ServerFleetEnv", i) for i in range(num_cpu)])
-    model = PPO("MultiInputPolicy", vec_env, verbose=1)
-    # Print the device
+    # vec_env = SubprocVecEnv([make_env("ServerFleetEnv", i) for i in range(num_cpu)])
+    env = gym.make("ServerFleetEnv", datacenters=datacenters, demands=demands, servers=servers, selling_prices=selling_prices)
+    model = PPO("MultiInputPolicy", env, verbose=2)
+    # Print the number of cpus on the device
     print(f"Number of cpus: {num_cpu}")
 
     # Create a checkpoint callback to save the model every 50000 steps
-    checkpoint_callback = CheckpointCallback(save_freq=50000//num_cpu, save_path='./rl_logs/ppo_v3/', name_prefix='ppo_checkpoint')
+    checkpoint_callback = CheckpointCallback(save_freq=10000, save_path='./rl_logs/ppo_v4/', name_prefix='ppo_checkpoint')
 
     # To resume training from a checkpoint, uncomment the code below:
     # Directory where checkpoints are saved
@@ -81,14 +82,14 @@ if __name__ == '__main__':
     print("\nTraining started")
     print("--" * 20)
     model.learn(total_timesteps=int(1e6), callback=checkpoint_callback)
-    model.save("ppo_v3")
+    model.save("ppo_v4")
 
     # Later, load the model and resume training
     # The model continues learning from where it left off
     # model = PPO.load("ppo_v1", env=env)
     # model.learn(total_timesteps=10000)
 
-    obs, info = vec_env.reset()
+    obs, info = env.reset()
     # Make a solution for each dictionary
     # Get the best score 
     training_seeds = known_seeds('training')
@@ -99,7 +100,7 @@ if __name__ == '__main__':
         timestep = 1
         while timestep < 169:
             action, _states = model.predict(obs)
-            obs, reward, terminated, truncated, info = vec_env.step(action)
+            obs, reward, terminated, truncated, info = env.step(action)
             action = map_action(action, timestep)
             nextstep = action.pop("nextstep")
             solution.append(action)
