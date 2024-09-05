@@ -56,7 +56,7 @@ if __name__ == '__main__':
     print(f"Number of cpus: {num_cpu}")
 
     # Create a checkpoint callback to save the model every 50000 steps
-    checkpoint_callback = CheckpointCallback(save_freq=50000//num_cpu, save_path='./rl_logs/ppo_v4/', name_prefix='ppo_checkpoint')
+    checkpoint_callback = CheckpointCallback(save_freq=50000, save_path='./rl_logs/ppo_v4/', name_prefix='ppo_checkpoint')
 
     # To resume training from a checkpoint, uncomment the code below:
     # Directory where checkpoints are saved
@@ -89,12 +89,12 @@ if __name__ == '__main__':
     # model = PPO.load("ppo_v1", env=env)
     # model.learn(total_timesteps=10000)
 
-    obs, info = env.reset()
     # Make a solution for each dictionary
     # Get the best score 
     training_seeds = known_seeds('training')
     print("\nNow predicting\n")
     for seed in training_seeds:
+        obs, info = env.reset()
         objective = 0
         solution = []
         timestep = 1

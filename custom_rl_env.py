@@ -11,6 +11,7 @@ num_timesteps = 168
 max_servers = 20000
 max_demands_per_timestep = num_server_gens
 max_num_actions = 30000
+invalid_reward = int(-1e8)
 
 # Fix the time steps
 # Fix action to buy at timestep 1
@@ -231,9 +232,9 @@ class ServerFleetEnv(gym.Env):
         rtimes = list(map(int, self.servers.loc[self.servers["server_generation"] == sgen, 'release_time'].values[0].strip('[]').split(',')))
         # center = self.data_centers[dcid]
         # server_info = self.server_info[sgen]
-        if (act == "buy" and sid in self.fleet["server_id"]) \
+        if (act == "buy" and self.time_step not in rtimes) \
+        or (act == "buy" and sid in self.fleet["server_id"]) \
         or (act != "buy" and sid not in self.fleet["server_id"]) \
-        or (act == "buy" and self.time_step not in rtimes) \
         or (act != "buy" and sgen != self.fleet.loc[self.fleet["server_id"] == sid, 'server_generation'].values[0]):
             return False
         
@@ -274,10 +275,9 @@ class ServerFleetEnv(gym.Env):
         # Check if constraints are obeyed
         mapped_action = map_action(action, self.time_step)
         if not self.is_action_valid(mapped_action):
-            reward = -10.0
             if action[4] > 0:
                 self.time_step += 1
-            return (self._get_obs(), reward, terminated, truncated, {})
+            return (self._get_obs(), invalid_reward, terminated, truncated, {})
         try:
             solution = solution_data_preparation(pd.DataFrame(mapped_action, index=[0]), self.servers, self.datacenters, self.selling_prices)
             ts_fleet = get_time_step_fleet(solution, self.time_step)
@@ -296,7 +296,7 @@ class ServerFleetEnv(gym.Env):
             reward = -10.0
             if action[4] > 0:
                 self.time_step += 1
-            return (self._get_obs(), reward, terminated, truncated, {})
+            return (self._get_obs(), invalid_reward, terminated, truncated, {})
 
         reward = self.calculate_reward()
 
