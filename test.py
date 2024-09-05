@@ -2,6 +2,7 @@ import pandas as pd
 import gymnasium as gym
 import os
 import numpy as np
+from sb3_contrib import MaskablePPO
 from stable_baselines3 import PPO
 from utils import save_solution, load_problem_data
 from seeds import known_seeds
@@ -22,7 +23,7 @@ env = gym.make("ServerFleetEnv", datacenters=datacenters, demands=demands, serve
 # Get the best score 
 # To resume training from a checkpoint, uncomment the code below:
 # Directory where checkpoints are saved
-checkpoint_dir = './rl_logs/ppo_v4'
+checkpoint_dir = './rl_logs/mask_ppo_v1'
 
 # List all files in the checkpoint directory
 checkpoint_files = [f for f in os.listdir(checkpoint_dir) if f.endswith('.zip')]
@@ -36,7 +37,7 @@ latest_checkpoint_path = os.path.join(checkpoint_dir, latest_checkpoint)
 print(latest_checkpoint_path)
 
 # Load the most recent checkpoint
-model = PPO.load(latest_checkpoint_path, env=env)
+model = MaskablePPO.load(latest_checkpoint_path, env=env)
 # Make a solution for each dictionary
 # Get the best score 
 training_seeds = known_seeds('training')
@@ -51,21 +52,17 @@ for seed in training_seeds:
         obs, reward, terminated, truncated, info = env.step(action)
         action = map_action(action, timestep)
         nextstep = action.pop("nextstep")
-        solution.append(action)
+        if action["action"] != "hold" and info["valid"]:
+            solution.append(action)
         timestep += nextstep 
         objective += reward
-        print(action)
+        print(action, info["valid"])
         # print a divider
         print("--" * 20)
         if terminated or truncated:
-            print("terminated at timestep", timestep)
+            print("terminated at timestep", timestep, terminated, truncated)
             break
 
     save_solution(solution, f"./test_output/{seed}.json")
     
     print(f"Objective for seed {seed} is: {objective}")
-
-# fleet = pd.read_csv('./rl_data/fleet.csv')
-
-# xs = servers.loc[servers["server_generation"] == "CPU.S3", 'release_time'].values[0].strip('[]').split(',')
-# print(xs[0], xs[1])

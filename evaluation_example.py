@@ -6,7 +6,8 @@ from evaluation import evaluation_function
 from seeds import known_seeds
 
 # LOAD SOLUTION
-best_solution = load_solution('./output/best_solution.json')
+# best_solution = load_solution('./output/best_solution.json')
+best_solution = load_solution('./test_output/1061.json')
 # LOAD PROBLEM DATA
 demand, datacenters, servers, selling_prices = load_problem_data()
 

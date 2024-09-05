@@ -6,6 +6,7 @@ from evaluation import get_time_step_demand, get_time_step_fleet, update_fleet, 
     check_datacenter_slots_size_constraint, get_utilization, get_normalized_lifespan, get_profit, put_fleet_on_hold, \
     change_selling_prices_format, solution_data_preparation
 
+num_datacenters = 4
 num_server_gens = 7
 num_timesteps = 168
 max_servers = 20000
@@ -16,29 +17,25 @@ invalid_reward = int(-1e8)
 # Fix the time steps
 # Fix action to buy at timestep 1
 def map_action(action, timestep):
-    action_map = ["buy", "move", "dismiss"]
+    action_map = ["buy", "move", "dismiss", "hold"]
     sgen_map = ["CPU.S1", "CPU.S2", "CPU.S3", "CPU.S4", "GPU.S1", "GPU.S2", "GPU.S3"]
     # Scale it back to the original discrete action space
     # Convert from [-1, 1] to [0, 1]
-    scaled_action = (action + 1) / 2
-    action = [
-        round(scaled_action[0] * 3),  # Map to [0, 3] (4 possible values)
-        round(scaled_action[1] * (num_server_gens - 1)),  # Map to [0, num_server_gens - 1]
-        round(scaled_action[2] * (max_servers - 1) + 1),  # Map to [1, 20000] (20000 possible values)
-        round(scaled_action[3] * 2),  # Map to [0, 2] (3 possible values)
-        round(scaled_action[4])
-    ]
-    if timestep == 1:
-        actual_action = "buy"
-    else:
-        actual_action = action_map[action[3]]
+    # scaled_action = (action + 1) / 2
+    # action = [
+    #     round(scaled_action[0] * 3),  # Map to [0, 3] (4 possible values)
+    #     round(scaled_action[1] * (num_server_gens - 1)),  # Map to [0, num_server_gens - 1]
+    #     round(scaled_action[2] * (max_servers - 1) + 1),  # Map to [1, 20000] (20000 possible values)
+    #     round(scaled_action[3] * 2),  # Map to [0, 2] (3 possible values)
+    #     round(scaled_action[4])
+    # ]
     return {
         "time_step": timestep,
         "datacenter_id": f"DC{action[0] + 1}",
         "server_generation": sgen_map[action[1]],
-        "server_id": action[2],
-        "action": actual_action,
-        "nextstep": action[4]
+        "server_id": int(action[2] + 1),
+        "action": action_map[action[3]],
+        "nextstep": int(action[4])
     }
 
 class ServerFleetEnv(gym.Env):
@@ -67,6 +64,11 @@ class ServerFleetEnv(gym.Env):
         d2["low"] /= d2["low"].max()
         self.normalised_demands = d2
 
+        servers['release_time'] = servers['release_time'].apply(lambda x: eval(x))
+
+        # Flatten the lists and collect unique values
+        self.rtimes = set([item for sublist in servers['release_time'] for item in sublist])
+
         self.fleet = pd.DataFrame()
         
 
@@ -90,10 +92,14 @@ class ServerFleetEnv(gym.Env):
         # }))
         # According to the Tips and Tricks page of Stable Baselines3 docs, it is recommended to rescale action space to [-1, 1]
         # we update the timestep ourselves, don't let the model learn
-        self.action_space = Box(
-            low=np.array([-1, -1, -1, -1, -1], dtype=np.float32), 
-            high=np.array([1, 1, 1, 1, 1], dtype=np.float32)
-        )
+        # self.action_space = Box(
+        #     low=np.array([-1, -1, -1, -1, -1], dtype=np.float32), 
+        #     high=np.array([1, 1, 1, 1, 1], dtype=np.float32)
+        # )
+        # MaskablePPO does not support Box action spaces, so we revert to MultiDiscrete
+        dims = [num_datacenters, num_server_gens, max_servers, 4, 2]
+        self.action_space = MultiDiscrete(dims)
+        self.action_mask = [True] * sum(dims)
 
         # Pad the entries with zero because gym.spaces.Sequence is not supported by stable baselines3
         # Nested observation spaces are not supported (Tuple/Dict space inside Tuple/Dict space)
@@ -111,21 +117,18 @@ class ServerFleetEnv(gym.Env):
             "datacenter_id": fleet_col,
             "server_generation": fleet_col,
             "server_id": fleet_col,
-            "action": fleet_col,
-            "server_type": fleet_col,
-            "release_time1": fleet_col,
-            "release_time2": fleet_col,
+            # "release_time1": fleet_col,
+            # "release_time2": fleet_col,
             "purchase_price": fleet_col,
-            "slots_size": fleet_col,
+            # "slots_size": fleet_col,
             "energy_consumption": fleet_col,
-            "capacity": fleet_col,
+            # "capacity": fleet_col,
             "average_maintenance_fee": fleet_col,
             "cost_of_energy": fleet_col,
             "latency_sensitivity": fleet_col,
             "slots_capacity": fleet_col,
             "selling_price": fleet_col,
             "lifespan": fleet_col,
-            "moved": fleet_col,
             "cost": Box(low=0, high=1e6, shape=(max_servers,), dtype=np.float64)
         })
 
@@ -149,51 +152,43 @@ class ServerFleetEnv(gym.Env):
             obs["datacenter_id"] = zeros
             obs["server_generation"] = zeros
             obs["server_id"] = zeros
-            obs["action"] = zeros
-            obs["server_type"] = zeros
-            obs["release_time1"] = zeros
-            obs["release_time2"] = zeros
+            # obs["release_time1"] = zeros
+            # obs["release_time2"] = zeros
             obs["purchase_price"] = zeros
-            obs["slots_size"] = zeros # either 2 or 4
+            # obs["slots_size"] = zeros # either 2 or 4
             obs["energy_consumption"] = zeros
-            obs["capacity"] = zeros
+            # obs["capacity"] = zeros
             obs["average_maintenance_fee"] = zeros
             obs["cost_of_energy"] = zeros
             obs["latency_sensitivity"] = zeros
             obs["slots_capacity"] = zeros
             obs["selling_price"] = zeros
             obs["lifespan"] = zeros
-            obs["moved"] = zeros
             obs["cost"] = zeros
         else:
             # Convert all the values in Fleet to numerical
             dcid_map = {"DC1": 1, "DC2": 2, "DC3": 3, "DC4": 4}
             sgen_map = {"CPU.S1": 1, "CPU.S2": 2, "CPU.S3": 3, "CPU.S4": 4, "GPU.S1": 5, "GPU.S2": 6, "GPU.S3": 7}
-            action_map = {"buy": 1, "move": 2, "dismiss": 3, "hold": 4}
-            stype_map = {"CPU": 1, "GPU": 2}
             latency_map = {"low": 1, "medium": 2, "high": 3}
             obs2 = self.fleet.copy()
             # Map to numeric values and normalise all columns except cost (becuz we dk the max and min values)
             # also cost_of_energy is already within 0 and 1
-            # moved is a boolean value so it is either 0 or 1
-            obs2["datacenter_id"] = (obs2["datacenter_id"].map(dcid_map)) / 4
+            obs2["datacenter_id"] = (obs2["datacenter_id"].map(dcid_map)) / num_datacenters
             obs2["server_generation"] = (obs2["server_generation"].map(sgen_map)) / num_server_gens
             obs2["server_id"] /= max_servers
-            obs2["action"] = (obs2["action"].map(action_map)) / 4
-            obs2["server_type"] = (obs2["server_type"].map(stype_map)) / 2
             obs2["latency_sensitivity"] = (obs2["latency_sensitivity"].map(latency_map)) / 3
-            obs2[["release_time1", "release_time2"]] = obs2["release_time"].str.strip('[]').str.split(',', expand=True)
-            obs2[["release_time1", "release_time2"]] = (obs2[["release_time1", "release_time2"]].astype(int)) / 168
+            # obs2[["release_time1", "release_time2"]] = obs2["release_time"].str.strip('[]').str.split(',', expand=True)
+            # obs2[["release_time1", "release_time2"]] = (obs2[["release_time1", "release_time2"]].astype(int)) / 168
             obs2["purchase_price"] /= 160000
-            obs2["slots_size"] /= 4
+            # obs2["slots_size"] /= 4
             obs2["energy_consumption"] /= 4200
-            obs2["capacity"] /= 160
+            # obs2["capacity"] /= 160
             obs2["average_maintenance_fee"] /= 3080
             obs2["slots_capacity"] /= 25245
             obs2["selling_price"] /= 2700
             obs2["lifespan"] /= 96
 
-            obs2.drop(columns=["release_time", "life_expectancy", "cost_of_moving"], inplace=True)
+            obs2.drop(columns=["release_time", "life_expectancy", "cost_of_moving", "server_type", "action", "moved", "slots_size", "capacity"], inplace=True)
             
             obs2 = obs2.to_dict(orient='list')
 
@@ -216,29 +211,41 @@ class ServerFleetEnv(gym.Env):
         # need to include the first demand in the first observation
         return self._get_obs(), {}
     
-    def is_action_valid(self, action):
-        # 1. Check if server id is valid ( buy needs to create a new id, move needs the id to not exist in destination datacenter, dismiss need to use an existing id )
-        # 3. Check if server is available for purchase at that time step
-        # 4. Check if server move is valid ( the source datacenter has the server and the destination datacenter has enough slots)
-        # 5. If move/dismiss, check if server generation matches id
+    def action_masks(self):
+        # 1. Check if server id is valid ( buy needs to create a new id, move/dismiss needs existing id)
+        for i in range(len(self.action_mask)):
+            self.action_mask[i] = True
 
-        # if fleet is empty, return true if action is buy
-        if self.fleet.empty:
-            return True
-
-        # Combine all server ids
-        # combined_server_ids = {server_id for dc in self.data_centers for server_id in dc["servers_dict"].keyszeros}
-        dcid, sgen, sid, act = action["datacenter_id"], action["server_generation"], action["server_id"], action["action"]
-        rtimes = list(map(int, self.servers.loc[self.servers["server_generation"] == sgen, 'release_time'].values[0].strip('[]').split(',')))
-        # center = self.data_centers[dcid]
-        # server_info = self.server_info[sgen]
-        if (act == "buy" and self.time_step not in rtimes) \
-        or (act == "buy" and sid in self.fleet["server_id"]) \
-        or (act != "buy" and sid not in self.fleet["server_id"]) \
-        or (act != "buy" and sgen != self.fleet.loc[self.fleet["server_id"] == sid, 'server_generation'].values[0]):
-            return False
+        # if available to buy at that time step, only do buy action
+        # need to assign a new server id
+        if self.time_step in self.rtimes:
+            # Set move, dismiss and hold to false
+            for i in [2, 3, 4]:
+                self.action_mask[num_datacenters + num_server_gens + max_servers + i] = False 
+            if not self.fleet.empty:
+                for sid in self.fleet["server_id"]:
+                    self.action_mask[num_datacenters + num_server_gens + sid] = False
+        elif not self.fleet.empty: # cannot buy at this timestep, just move/dismiss/hold
+            # Set buy to false
+            self.action_mask[num_datacenters + num_server_gens + max_servers + 1] = False 
+            # Only existing server ids can be chosen
+            sid_set = set([sid for sid in self.fleet["server_id"]])
+            for i in range(max_servers):
+                if i not in sid_set:
+                    self.action_mask[num_datacenters + num_server_gens + i] = False
+        else: # Just hold
+            for i in [1, 2, 3]:
+                self.action_mask[num_datacenters + num_server_gens + max_servers + i] = False 
         
-        return True 
+        return self.action_mask
+    
+    def is_sgen_valid(self, action):
+        # 5. If move/dismiss, check if server generation matches id
+        print(self.fleet)
+
+        sgen, sid, act = action["server_generation"], action["server_id"], action["action"]
+        return (act == "hold") or (self.fleet.empty) or \
+            (act != "buy" and sgen == self.fleet.loc[self.fleet["server_id"] == sid, 'server_generation'].values[0])
 
     def calculate_reward(self):
         # GET THE ACTUAL DEMAND AT TIMESTEP ts
@@ -274,39 +281,33 @@ class ServerFleetEnv(gym.Env):
         # GET THE SERVERS DEPLOYED AT TIMESTEP ts
         # Check if constraints are obeyed
         mapped_action = map_action(action, self.time_step)
-        if not self.is_action_valid(mapped_action):
-            if action[4] > 0:
-                self.time_step += 1
-            return (self._get_obs(), invalid_reward, terminated, truncated, {})
+        # if not self.is_sgen_valid(mapped_action):
+        #     if action[4] == 1:
+        #         self.time_step += 1
+        #     return (self._get_obs(), invalid_reward, terminated, truncated, {})
         try:
             solution = solution_data_preparation(pd.DataFrame(mapped_action, index=[0]), self.servers, self.datacenters, self.selling_prices)
             ts_fleet = get_time_step_fleet(solution, self.time_step)
-
-            # if ts_fleet.empty and not self.fleet.empty:
-            #     ts_fleet = self.fleet
-            # elif ts_fleet.empty and self.fleet.empty:
-            #     return 0
 
             # UPDATE FLEET
             new_fleet = update_fleet(self.time_step, self.fleet, ts_fleet)
 
             check_datacenter_slots_size_constraint(new_fleet)
             self.fleet = new_fleet 
-        except ValueError as ve:
-            reward = -10.0
-            if action[4] > 0:
+        except Exception as e:
+            if action[4] == 1:
                 self.time_step += 1
-            return (self._get_obs(), invalid_reward, terminated, truncated, {})
+            return (self._get_obs(), invalid_reward, terminated, truncated, {"valid": False})
 
         reward = self.calculate_reward()
 
         # print(f"reward at time step {self.time_step} with action {mapped_action} is {reward}")
 
-        if action[4] > 0:
+        if action[4] == 1:
             self.time_step += 1
 
         # Optionally we can pass additional info, we are not using that for now
-        info = {}
+        info = {"valid": True}
 
         return (self._get_obs(), reward, terminated, truncated, info)
 

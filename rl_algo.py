@@ -4,6 +4,7 @@ import os
 import numpy as np
 import pandas as pd
 from stable_baselines3 import PPO
+from sb3_contrib import MaskablePPO
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.utils import set_random_seed
 from stable_baselines3.common.env_checker import check_env
@@ -12,6 +13,8 @@ from utils import load_problem_data, save_solution
 from evaluation import get_actual_demand
 from seeds import known_seeds
 from custom_rl_env import map_action
+import warnings
+warnings.filterwarnings("ignore")
 
 # For more examples, refer to https://stable-baselines3.readthedocs.io/en/master/guide/examples.html
 
@@ -51,12 +54,12 @@ if __name__ == '__main__':
     # Create the model
     # env = SubprocVecEnv([make_env("ServerFleetEnv", i) for i in range(num_cpu)])
     env = gym.make("ServerFleetEnv", datacenters=datacenters, demands=demands, servers=servers, selling_prices=selling_prices)
-    model = PPO("MultiInputPolicy", env, verbose=2)
+    model = MaskablePPO("MultiInputPolicy", env, verbose=1)
     # Print the number of cpus on the device
     print(f"Number of cpus: {num_cpu}")
 
     # Create a checkpoint callback to save the model every 50000 steps
-    checkpoint_callback = CheckpointCallback(save_freq=50000, save_path='./rl_logs/ppo_v4/', name_prefix='ppo_checkpoint')
+    checkpoint_callback = CheckpointCallback(save_freq=50000, save_path='./rl_logs/mask_ppo_v1/', name_prefix='ppo_checkpoint')
 
     # To resume training from a checkpoint, uncomment the code below:
     # Directory where checkpoints are saved
@@ -82,7 +85,7 @@ if __name__ == '__main__':
     print("\nTraining started")
     print("--" * 20)
     model.learn(total_timesteps=int(1e6), callback=checkpoint_callback)
-    model.save("ppo_v4")
+    model.save("mask_ppo_v1")
 
     # Later, load the model and resume training
     # The model continues learning from where it left off
@@ -103,7 +106,8 @@ if __name__ == '__main__':
             obs, reward, terminated, truncated, info = env.step(action)
             action = map_action(action, timestep)
             nextstep = action.pop("nextstep")
-            solution.append(action)
+            if action["action"] != "hold":
+                solution.append(action)
             timestep += nextstep 
             objective += reward
             print(action)
