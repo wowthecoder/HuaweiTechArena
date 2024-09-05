@@ -49,14 +49,14 @@ def make_env(env_id: str, rank: int, seed: int = 0):
 
 if __name__ == '__main__':
     # Create the model
-    # vec_env = SubprocVecEnv([make_env("ServerFleetEnv", i) for i in range(num_cpu)])
+    # env = SubprocVecEnv([make_env("ServerFleetEnv", i) for i in range(num_cpu)])
     env = gym.make("ServerFleetEnv", datacenters=datacenters, demands=demands, servers=servers, selling_prices=selling_prices)
     model = PPO("MultiInputPolicy", env, verbose=2)
     # Print the number of cpus on the device
     print(f"Number of cpus: {num_cpu}")
 
     # Create a checkpoint callback to save the model every 50000 steps
-    checkpoint_callback = CheckpointCallback(save_freq=10000, save_path='./rl_logs/ppo_v4/', name_prefix='ppo_checkpoint')
+    checkpoint_callback = CheckpointCallback(save_freq=50000//num_cpu, save_path='./rl_logs/ppo_v4/', name_prefix='ppo_checkpoint')
 
     # To resume training from a checkpoint, uncomment the code below:
     # Directory where checkpoints are saved

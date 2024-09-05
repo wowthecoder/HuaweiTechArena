@@ -53,11 +53,18 @@ class ServerFleetEnv(gym.Env):
         self.formatted_selling_prices = change_selling_prices_format(selling_prices)
 
         self.demands = demands.copy()
-        sgen_map = {"CPU.S1": 0, "CPU.S2": 1, "CPU.S3": 2, "CPU.S4": 3, "GPU.S1": 4, "GPU.S2": 5, "GPU.S3": 6}
+        sgen_map = {"CPU.S1": 1, "CPU.S2": 2, "CPU.S3": 3, "CPU.S4": 4, "GPU.S1": 5, "GPU.S2": 6, "GPU.S3": 7}
         d2 = demands.copy()
         d2["demand_generation"] = d2["server_generation"].map(sgen_map)
         d2.drop(columns="server_generation", inplace=True)
-        self.normalised_demands = (d2 - d2.min()) / (d2.max() - d2.min())
+        # If we normalise as below, the min value of each column will be 0
+        # we want to differentiate between padding and actual value, so just div by max()
+        # self.normalised_demands = (d2 - d2.min()) / (d2.max() - d2.min())
+        d2["demand_generation"] /= num_server_gens
+        d2["high"] /= d2["high"].max()
+        d2["medium"] /= d2["medium"].max()
+        d2["low"] /= d2["low"].max()
+        self.normalised_demands = d2
 
         self.fleet = pd.DataFrame()
         
@@ -131,7 +138,7 @@ class ServerFleetEnv(gym.Env):
         # Pad the demand_list with empty dicts
         padding = [0] * (max_demands_per_timestep - len(demand_ts))
         for k in demand_dict.keys():
-            obs[k] = demand_dict[k] + padding
+            obs[k] = np.array(demand_dict[k] + padding)
 
         obs["time_step"] = self.time_step
 
@@ -161,7 +168,7 @@ class ServerFleetEnv(gym.Env):
             # Convert all the values in Fleet to numerical
             dcid_map = {"DC1": 1, "DC2": 2, "DC3": 3, "DC4": 4}
             sgen_map = {"CPU.S1": 1, "CPU.S2": 2, "CPU.S3": 3, "CPU.S4": 4, "GPU.S1": 5, "GPU.S2": 6, "GPU.S3": 7}
-            action_map = {"buy": 1, "move": 2, "dismiss": 3}
+            action_map = {"buy": 1, "move": 2, "dismiss": 3, "hold": 4}
             stype_map = {"CPU": 1, "GPU": 2}
             latency_map = {"low": 1, "medium": 2, "high": 3}
             obs2 = self.fleet.copy()
@@ -169,9 +176,9 @@ class ServerFleetEnv(gym.Env):
             # also cost_of_energy is already within 0 and 1
             # moved is a boolean value so it is either 0 or 1
             obs2["datacenter_id"] = (obs2["datacenter_id"].map(dcid_map)) / 4
-            obs2["server_generation"] = (obs2["server_generation"].map(sgen_map)) / 7
+            obs2["server_generation"] = (obs2["server_generation"].map(sgen_map)) / num_server_gens
             obs2["server_id"] /= max_servers
-            obs2["action"] = (obs2["action"].map(action_map)) / 3
+            obs2["action"] = (obs2["action"].map(action_map)) / 4
             obs2["server_type"] = (obs2["server_type"].map(stype_map)) / 2
             obs2["latency_sensitivity"] = (obs2["latency_sensitivity"].map(latency_map)) / 3
             obs2[["release_time1", "release_time2"]] = obs2["release_time"].str.strip('[]').str.split(',', expand=True)
@@ -188,11 +195,9 @@ class ServerFleetEnv(gym.Env):
             obs2.drop(columns=["release_time", "life_expectancy", "cost_of_moving"], inplace=True)
             
             obs2 = obs2.to_dict(orient='list')
-            print("the fleet at time step", self.time_step)
-            print(obs2)
 
             # Pad all entries with zeroes up to max_servers
-            padding = [0] * (max_servers - len(self.fleet))
+            padding = [0.0] * (max_servers - len(self.fleet))
             for k in obs2.keys():
                 obs[k] = np.array(obs2[k] + padding)
 
@@ -223,14 +228,13 @@ class ServerFleetEnv(gym.Env):
         # Combine all server ids
         # combined_server_ids = {server_id for dc in self.data_centers for server_id in dc["servers_dict"].keyszeros}
         dcid, sgen, sid, act = action["datacenter_id"], action["server_generation"], action["server_id"], action["action"]
-        rtimes = list(map(int, self.servers.loc[self.fleet["server_generation"] == sgen, 'release_time'].strip('zeros').split(',')))
+        rtimes = list(map(int, self.servers.loc[self.servers["server_generation"] == sgen, 'release_time'].values[0].strip('[]').split(',')))
         # center = self.data_centers[dcid]
         # server_info = self.server_info[sgen]
-        if (act == 0 and sid in self.fleet["server_ids"]) \
-        or (act == 1 and sid not in self.fleet["server_ids"]) \
-        or (act == 2 and sid not in self.fleet["server_ids"]) \
-        or (act == 0 and self.time_step not in rtimes) \
-        or (act != 0 and sgen != self.fleet.loc[self.fleet["server_id"] == sid, 'server_generation'].values[0]):
+        if (act == "buy" and sid in self.fleet["server_id"]) \
+        or (act != "buy" and sid not in self.fleet["server_id"]) \
+        or (act == "buy" and self.time_step not in rtimes) \
+        or (act != "buy" and sgen != self.fleet.loc[self.fleet["server_id"] == sid, 'server_generation'].values[0]):
             return False
         
         return True 
@@ -263,7 +267,7 @@ class ServerFleetEnv(gym.Env):
 
     def step(self, action):
         terminated = bool(self.time_step == num_timesteps)
-        truncated = self.num_actions > max_num_actions
+        truncated = bool(self.num_actions > max_num_actions)
         self.num_actions += 1
 
         # GET THE SERVERS DEPLOYED AT TIMESTEP ts
@@ -271,10 +275,9 @@ class ServerFleetEnv(gym.Env):
         mapped_action = map_action(action, self.time_step)
         if not self.is_action_valid(mapped_action):
             reward = -10.0
-            print(f"Invalid! reward at time step {self.time_step} with action {mapped_action} is {reward}")
             if action[4] > 0:
                 self.time_step += 1
-            return self._get_obs(), reward, terminated, truncated, {}
+            return (self._get_obs(), reward, terminated, truncated, {})
         try:
             solution = solution_data_preparation(pd.DataFrame(mapped_action, index=[0]), self.servers, self.datacenters, self.selling_prices)
             ts_fleet = get_time_step_fleet(solution, self.time_step)
@@ -291,14 +294,13 @@ class ServerFleetEnv(gym.Env):
             self.fleet = new_fleet 
         except ValueError as ve:
             reward = -10.0
-            print(f"Error at time step {self.time_step} with action {mapped_action} is {ve}")
             if action[4] > 0:
                 self.time_step += 1
-            return self._get_obs(), reward, terminated, truncated, {}
+            return (self._get_obs(), reward, terminated, truncated, {})
 
         reward = self.calculate_reward()
 
-        print(f"reward at time step {self.time_step} with action {mapped_action} is {reward}")
+        # print(f"reward at time step {self.time_step} with action {mapped_action} is {reward}")
 
         if action[4] > 0:
             self.time_step += 1
@@ -309,9 +311,10 @@ class ServerFleetEnv(gym.Env):
         return (self._get_obs(), reward, terminated, truncated, info)
 
     def render(self):
-        print("Timestep:", self.time_step)
-        print("State:", self._get_obs())
-        print("Fleet:", self.fleet)
+        pass
+        # print("Timestep:", self.time_step)
+        # print("State:", self._get_obs())
+        # print("Fleet:", self.fleet)
 
     def close(self):
         pass

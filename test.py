@@ -8,7 +8,7 @@ from seeds import known_seeds
 from custom_rl_env import map_action
 from evaluation import get_actual_demand
 
-# demands, datacenters, servers, selling_prices = load_problem_data()
+demands, datacenters, servers, selling_prices = load_problem_data()
 # demands = get_actual_demand(demands, seed=1061)
 
 # gym.envs.registration.register(
@@ -61,5 +61,7 @@ from evaluation import get_actual_demand
     
 #     print(f"Objective for seed {seed} is: {objective}")
 
-['high', 'low', 'medium', 'demand_generation', 'time_step', 'datacenter_id', 'server_generation', 'server_id', 'action', 'server_type', 'purchase_price', 'slots_size', 'energy_consumption', 'capacity', 'average_maintenance_fee', 'cost_of_energy', 'latency_sensitivity', 'slots_capacity', 'selling_price', 'lifespan', 'moved', 'cost', 'release_time1', 'release_time2']
-['action', 'average_maintenance_fee', 'capacity', 'cost', 'cost_of_energy', 'datacenter_id', 'demand_generation', 'energy_consumption', 'high', 'latency_sensitivity', 'lifespan', 'low', 'medium', 'moved', 'purchase_price', 'release_time_1', 'release_time_2', 'selling_price', 'server_generation', 'server_id', 'server_type', 'slots_capacity', 'slots_size', 'time_step']
+fleet = pd.read_csv('./rl_data/fleet.csv')
+
+xs = servers.loc[servers["server_generation"] == "CPU.S3", 'release_time'].values[0].strip('[]').split(',')
+print(xs[0], xs[1])
