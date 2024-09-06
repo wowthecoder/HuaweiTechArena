@@ -31,7 +31,7 @@ demands, datacenters, servers, selling_prices = load_problem_data()
 
 demands = get_actual_demand(demands, seed=1061)
 # demands.to_csv('./rl_data/actual_demand_1061.csv', index=False)
-num_cpu = os.cpu_count() // 2
+num_cpu = 4 # os.cpu_count() // 2
 
 def make_env(env_id: str, rank: int, seed: int = 0):
     """

@@ -9,7 +9,7 @@ from evaluation import get_time_step_demand, get_time_step_fleet, update_fleet, 
 num_datacenters = 4
 num_server_gens = 7
 num_timesteps = 168
-max_servers = 20000
+max_servers = 12000
 max_demands_per_timestep = num_server_gens
 # max_num_actions = 30000
 invalid_reward = int(-1e8)
