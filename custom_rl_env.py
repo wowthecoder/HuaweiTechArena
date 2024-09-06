@@ -5,6 +5,8 @@ import pandas as pd
 from evaluation import get_time_step_demand, get_time_step_fleet, update_fleet, get_capacity_by_server_generation_latency_sensitivity, \
     check_datacenter_slots_size_constraint, get_utilization, get_normalized_lifespan, get_profit, put_fleet_on_hold, \
     change_selling_prices_format, solution_data_preparation
+from torch.distributions import Distribution
+Distribution.set_default_validate_args(False)
 
 num_datacenters = 4
 num_server_gens = 7
@@ -25,7 +27,7 @@ def map_action(action, timestep):
     # action = [
     #     round(scaled_action[0] * 3),  # Map to [0, 3] (4 possible values)
     #     round(scaled_action[1] * (num_server_gens - 1)),  # Map to [0, num_server_gens - 1]
-    #     round(scaled_action[2] * (max_servers - 1) + 1),  # Map to [1, 20000] (20000 possible values)
+    #     round(scaled_action[2] * (max_servers - 1) + 1),  # Map to [1, 12000] (12000 possible values)
     #     round(scaled_action[3] * 2),  # Map to [0, 2] (3 possible values)
     #     round(scaled_action[4])
     # ]
@@ -63,10 +65,13 @@ class ServerFleetEnv(gym.Env):
         d2["low"] /= d2["low"].max()
         self.normalised_demands = d2
 
-        servers['release_time'] = servers['release_time'].apply(lambda x: eval(x))
+        rtime_copy = servers['release_time'].copy()
+
+        # Apply the transformation to the copied column
+        rtime_copy = rtime_copy.apply(lambda x: eval(x))
 
         # Flatten the lists and collect unique values
-        self.rtimes = set([item for sublist in servers['release_time'] for item in sublist])
+        self.rtimes = set([item for sublist in rtime_copy for item in sublist])
 
         self.fleet = pd.DataFrame()
         
@@ -111,7 +116,7 @@ class ServerFleetEnv(gym.Env):
             "high": demand_col,
             "medium": demand_col,
             "low": demand_col,
-            "time_step": Discrete(num_timesteps),
+            "time_step": Discrete(num_timesteps+1),
             # fleet state
             "datacenter_id": fleet_col,
             "server_generation": fleet_col,
@@ -218,22 +223,22 @@ class ServerFleetEnv(gym.Env):
         # need to assign a new server id
         if self.time_step in self.rtimes and len(self.fleet) < max_servers:
             # Set move, dismiss and hold to false
-            for i in [2, 3, 4]:
-                self.action_mask[num_datacenters + num_server_gens + max_servers + i] = False 
+            for i in [1, 2, 3]:
+                self.action_mask[num_datacenters + num_server_gens + max_servers + i] = False
             if not self.fleet.empty:
                 for sid in self.fleet["server_id"]:
-                    self.action_mask[num_datacenters + num_server_gens + sid] = False
+                    self.action_mask[num_datacenters + num_server_gens + sid - 1] = False
         elif not self.fleet.empty: # cannot buy at this timestep, just move/dismiss/hold
             # Set buy to false
-            self.action_mask[num_datacenters + num_server_gens + max_servers + 1] = False 
+            self.action_mask[num_datacenters + num_server_gens + max_servers] = False 
             # Only existing server ids can be chosen
             sid_set = set([sid for sid in self.fleet["server_id"]])
             for i in range(max_servers):
-                if i not in sid_set:
+                if i+1 not in sid_set:
                     self.action_mask[num_datacenters + num_server_gens + i] = False
         else: # Just hold
-            for i in [1, 2, 3]:
-                self.action_mask[num_datacenters + num_server_gens + max_servers + i] = False 
+            for i in [0, 1, 2]:
+                self.action_mask[num_datacenters + num_server_gens + max_servers + i] = False
         
         return self.action_mask
     
@@ -273,7 +278,7 @@ class ServerFleetEnv(gym.Env):
 
     def step(self, action):
         terminated = bool(self.time_step >= num_timesteps)
-        truncated = True # No need to truncate here, already set max_episode_steps when registering
+        truncated = False # No need to truncate here, already set max_episode_steps when registering
 
         # GET THE SERVERS DEPLOYED AT TIMESTEP ts
         # Check if constraints are obeyed

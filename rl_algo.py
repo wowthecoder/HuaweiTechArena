@@ -15,7 +15,8 @@ from evaluation import get_actual_demand
 from seeds import known_seeds
 from custom_rl_env import map_action
 import warnings
-warnings.filterwarnings("ignore")
+
+warnings.filterwarnings('ignore')
 
 # For more examples, refer to https://stable-baselines3.readthedocs.io/en/master/guide/examples.html
 
@@ -27,9 +28,9 @@ gym.envs.registration.register(
 )
 
 # load the problem data
-demands, datacenters, servers, selling_prices = load_problem_data()
+orig_demands, datacenters, servers, selling_prices = load_problem_data()
 
-demands = get_actual_demand(demands, seed=1061)
+demands_1061 = get_actual_demand(orig_demands, seed=1061)
 # demands.to_csv('./rl_data/actual_demand_1061.csv', index=False)
 num_cpu = 4 # os.cpu_count() // 2
 
@@ -42,10 +43,9 @@ def make_env(env_id: str, rank: int, seed: int = 0):
     :param rank: index of the subprocess
     """
     def _init():
-        env = gym.make(env_id, datacenters=datacenters, demands=demands, servers=servers, selling_prices=selling_prices)
+        env = gym.make(env_id, datacenters=datacenters, demands=demands_1061, servers=servers, selling_prices=selling_prices)
         env.reset(seed=seed + rank)
         # wrapped_env = FlattenObservation(env)
-        # check_env(env)
         return env
     
     set_random_seed(seed)
@@ -98,6 +98,10 @@ if __name__ == '__main__':
     training_seeds = known_seeds('training')
     print("\nNow predicting\n")
     for seed in training_seeds:
+        demands = get_actual_demand(orig_demands, seed=seed)
+        env = gym.make("ServerFleetEnv", datacenters=datacenters, demands=demands, servers=servers, selling_prices=selling_prices)
+        # Load the most recent checkpoint
+        model = MaskablePPO.load("mask_ppo_v2", env=env)
         obs, info = env.reset()
         objective = 0
         solution = []
