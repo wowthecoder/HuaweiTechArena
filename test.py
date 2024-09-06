@@ -3,6 +3,7 @@ import gymnasium as gym
 import os
 import numpy as np
 from sb3_contrib import MaskablePPO
+from sb3_contrib.common.maskable.utils import get_action_masks
 from stable_baselines3 import PPO
 from utils import save_solution, load_problem_data
 from seeds import known_seeds
@@ -15,7 +16,7 @@ demands = get_actual_demand(demands, seed=1061)
 gym.envs.registration.register(
     id='ServerFleetEnv',
     entry_point='custom_rl_env:ServerFleetEnv',
-    max_episode_steps=168,
+    max_episode_steps=30000,
 )
 
 env = gym.make("ServerFleetEnv", datacenters=datacenters, demands=demands, servers=servers, selling_prices=selling_prices)
@@ -48,7 +49,7 @@ for seed in training_seeds:
     solution = []
     timestep = 1
     while timestep < 169:
-        action, _states = model.predict(obs)
+        action, _states = model.predict(obs, action_masks=get_action_masks(env))
         obs, reward, terminated, truncated, info = env.step(action)
         action = map_action(action, timestep)
         nextstep = action.pop("nextstep")

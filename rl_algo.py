@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 from stable_baselines3 import PPO
 from sb3_contrib import MaskablePPO
+from sb3_contrib.common.maskable.utils import get_action_masks
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.utils import set_random_seed
 from stable_baselines3.common.env_checker import check_env
@@ -22,7 +23,7 @@ warnings.filterwarnings("ignore")
 gym.envs.registration.register(
     id='ServerFleetEnv',
     entry_point='custom_rl_env:ServerFleetEnv',
-    max_episode_steps=168,
+    max_episode_steps=30000,
 )
 
 # load the problem data
@@ -30,7 +31,7 @@ demands, datacenters, servers, selling_prices = load_problem_data()
 
 demands = get_actual_demand(demands, seed=1061)
 # demands.to_csv('./rl_data/actual_demand_1061.csv', index=False)
-num_cpu = os.cpu_count()
+num_cpu = os.cpu_count() // 2
 
 def make_env(env_id: str, rank: int, seed: int = 0):
     """
@@ -52,14 +53,14 @@ def make_env(env_id: str, rank: int, seed: int = 0):
 
 if __name__ == '__main__':
     # Create the model
-    # env = SubprocVecEnv([make_env("ServerFleetEnv", i) for i in range(num_cpu)])
-    env = gym.make("ServerFleetEnv", datacenters=datacenters, demands=demands, servers=servers, selling_prices=selling_prices)
+    env = SubprocVecEnv([make_env("ServerFleetEnv", i) for i in range(num_cpu)])
+    # env = gym.make("ServerFleetEnv", datacenters=datacenters, demands=demands, servers=servers, selling_prices=selling_prices)
     model = MaskablePPO("MultiInputPolicy", env, verbose=1)
     # Print the number of cpus on the device
     print(f"Number of cpus: {num_cpu}")
 
     # Create a checkpoint callback to save the model every 50000 steps
-    checkpoint_callback = CheckpointCallback(save_freq=50000, save_path='./rl_logs/mask_ppo_v1/', name_prefix='ppo_checkpoint')
+    checkpoint_callback = CheckpointCallback(save_freq=50000//num_cpu, save_path='./rl_logs/mask_ppo_v2/', name_prefix='ppo_checkpoint')
 
     # To resume training from a checkpoint, uncomment the code below:
     # Directory where checkpoints are saved
@@ -85,7 +86,7 @@ if __name__ == '__main__':
     print("\nTraining started")
     print("--" * 20)
     model.learn(total_timesteps=int(1e6), callback=checkpoint_callback)
-    model.save("mask_ppo_v1")
+    model.save("mask_ppo_v2")
 
     # Later, load the model and resume training
     # The model continues learning from where it left off
@@ -102,21 +103,22 @@ if __name__ == '__main__':
         solution = []
         timestep = 1
         while timestep < 169:
-            action, _states = model.predict(obs)
+            action, _states = model.predict(obs, action_masks=get_action_masks(env))
             obs, reward, terminated, truncated, info = env.step(action)
             action = map_action(action, timestep)
             nextstep = action.pop("nextstep")
-            if action["action"] != "hold":
+            if action["action"] != "hold" and info["valid"]:
                 solution.append(action)
             timestep += nextstep 
             objective += reward
-            print(action)
+            print(action, info["valid"])
             # print a divider
             print("--" * 20)
             if terminated or truncated:
+                print("terminated at timestep", timestep, terminated, truncated)
                 break
 
-        save_solution(solution, f"./output/{seed}.json")
+        save_solution(solution, f"./test_output/{seed}.json")
         
         print(f"Objective for seed {seed} is: {objective}")
 

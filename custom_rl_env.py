@@ -11,7 +11,7 @@ num_server_gens = 7
 num_timesteps = 168
 max_servers = 20000
 max_demands_per_timestep = num_server_gens
-max_num_actions = 30000
+# max_num_actions = 30000
 invalid_reward = int(-1e8)
 
 # Fix the time steps
@@ -44,7 +44,6 @@ class ServerFleetEnv(gym.Env):
     def _init_state(self, datacenters, demands, servers, selling_prices):
         self.datacenters = datacenters.copy()
         self.time_step = 1
-        self.num_actions = 0 # used for truncation
 
         self.servers = servers.copy()
         self.selling_prices = selling_prices.copy()
@@ -170,7 +169,7 @@ class ServerFleetEnv(gym.Env):
             dcid_map = {"DC1": 1, "DC2": 2, "DC3": 3, "DC4": 4}
             sgen_map = {"CPU.S1": 1, "CPU.S2": 2, "CPU.S3": 3, "CPU.S4": 4, "GPU.S1": 5, "GPU.S2": 6, "GPU.S3": 7}
             latency_map = {"low": 1, "medium": 2, "high": 3}
-            obs2 = self.fleet.copy()
+            obs2 = self.fleet.head(max_servers).copy()
             # Map to numeric values and normalise all columns except cost (becuz we dk the max and min values)
             # also cost_of_energy is already within 0 and 1
             obs2["datacenter_id"] = (obs2["datacenter_id"].map(dcid_map)) / num_datacenters
@@ -206,7 +205,6 @@ class ServerFleetEnv(gym.Env):
         """
         super().reset(seed=seed, options=options)
         self.time_step = 1
-        self.num_actions = 0
         self.fleet = pd.DataFrame()
         # need to include the first demand in the first observation
         return self._get_obs(), {}
@@ -216,9 +214,9 @@ class ServerFleetEnv(gym.Env):
         for i in range(len(self.action_mask)):
             self.action_mask[i] = True
 
-        # if available to buy at that time step, only do buy action
+        # if available to buy at that time step, only do buy action, unless fleet is full (max_servers reached)
         # need to assign a new server id
-        if self.time_step in self.rtimes:
+        if self.time_step in self.rtimes and len(self.fleet) < max_servers:
             # Set move, dismiss and hold to false
             for i in [2, 3, 4]:
                 self.action_mask[num_datacenters + num_server_gens + max_servers + i] = False 
@@ -274,9 +272,8 @@ class ServerFleetEnv(gym.Env):
         return reward
 
     def step(self, action):
-        terminated = bool(self.time_step == num_timesteps)
-        truncated = bool(self.num_actions > max_num_actions)
-        self.num_actions += 1
+        terminated = bool(self.time_step >= num_timesteps)
+        truncated = True # No need to truncate here, already set max_episode_steps when registering
 
         # GET THE SERVERS DEPLOYED AT TIMESTEP ts
         # Check if constraints are obeyed
