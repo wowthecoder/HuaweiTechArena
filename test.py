@@ -7,8 +7,10 @@ from sb3_contrib.common.maskable.utils import get_action_masks
 from stable_baselines3 import PPO
 from utils import save_solution, load_problem_data
 from seeds import known_seeds
-from custom_rl_env import map_action
 from evaluation import get_actual_demand
+import warnings 
+
+warnings.filterwarnings('ignore')
 
 orig_demands, datacenters, servers, selling_prices = load_problem_data()
 # demands = get_actual_demand(demands, seed=1061)
@@ -23,7 +25,7 @@ gym.envs.registration.register(
 # Get the best score 
 # To resume training from a checkpoint, uncomment the code below:
 # Directory where checkpoints are saved
-checkpoint_dir = './rl_logs/mask_ppo_v2'
+checkpoint_dir = './rl_logs/mask_ppo_v3'
 
 # List all files in the checkpoint directory
 checkpoint_files = [f for f in os.listdir(checkpoint_dir) if f.endswith('.zip')]
@@ -52,15 +54,14 @@ for seed in training_seeds:
     while timestep < 169:
         action, _states = model.predict(obs, action_masks=get_action_masks(env), deterministic=True)
         obs, reward, terminated, truncated, info = env.step(action)
-        action = map_action(action, timestep)
+        action = env.map_action(action, timestep)
         nextstep = action.pop("nextstep")
         if action["action"] != "hold" and info["valid"]:
+            print(action)
+            print("--" * 20)
             solution.append(action)
         timestep += nextstep 
         objective += reward
-        print(action, info["valid"])
-        # print a divider
-        print("--" * 20)
         if terminated or truncated:
             print("terminated at timestep", timestep, terminated, truncated)
             break
@@ -68,3 +69,9 @@ for seed in training_seeds:
     save_solution(solution, f"./test_output/{seed}.json")
     
     print(f"Objective for seed {seed} is: {objective}")
+
+# fleet = pd.read_csv('./rl_data/fleet.csv')
+
+# sgen = fleet.loc[fleet['server_id'] == '69b3d132-028c-4e06-96ec-81f2f2a7fa7c', 'server_generation'].values[0]
+
+# print(sgen)

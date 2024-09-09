@@ -13,7 +13,6 @@ from stable_baselines3.common.callbacks import CheckpointCallback
 from utils import load_problem_data, save_solution
 from evaluation import get_actual_demand
 from seeds import known_seeds
-from custom_rl_env import map_action
 import warnings
 
 warnings.filterwarnings('ignore')
@@ -45,6 +44,7 @@ def make_env(env_id: str, rank: int, seed: int = 0):
     def _init():
         env = gym.make(env_id, datacenters=datacenters, demands=demands_1061, servers=servers, selling_prices=selling_prices)
         env.reset(seed=seed + rank)
+        # check_env(env)
         # wrapped_env = FlattenObservation(env)
         return env
     
@@ -55,16 +55,16 @@ if __name__ == '__main__':
     # Create the model
     env = SubprocVecEnv([make_env("ServerFleetEnv", i) for i in range(num_cpu)])
     # env = gym.make("ServerFleetEnv", datacenters=datacenters, demands=demands, servers=servers, selling_prices=selling_prices)
-    model = MaskablePPO("MultiInputPolicy", env, verbose=1)
+    model = MaskablePPO("MultiInputPolicy", env, verbose=1, gamma=0.99)
     # Print the number of cpus on the device
     print(f"Number of cpus: {num_cpu}")
 
     # Create a checkpoint callback to save the model every 50000 steps
-    checkpoint_callback = CheckpointCallback(save_freq=50000//num_cpu, save_path='./rl_logs/mask_ppo_v2/', name_prefix='ppo_checkpoint')
+    checkpoint_callback = CheckpointCallback(save_freq=50000//num_cpu, save_path='./rl_logs/mask_ppo_v3/', name_prefix='ppo_checkpoint')
 
     # To resume training from a checkpoint, uncomment the code below:
     # Directory where checkpoints are saved
-    # checkpoint_dir = './rl-logs/'
+    # checkpoint_dir = './rl_logs/mask_ppo_v2'
 
     # # List all files in the checkpoint directory
     # checkpoint_files = [f for f in os.listdir(checkpoint_dir) if f.endswith('.zip')]
@@ -77,16 +77,16 @@ if __name__ == '__main__':
     # latest_checkpoint_path = os.path.join(checkpoint_dir, latest_checkpoint)
 
     # # Load the most recent checkpoint
-    # model = PPO.load(latest_checkpoint_path, env=env)
+    # model = MaskablePPO.load(latest_checkpoint_path, env=env)
 
     # # Resume training
-    # model.learn(total_timesteps=10000)
+    # # model.learn(total_timesteps=10000)
 
     # Each episode takes about 15k - 25k actions
     print("\nTraining started")
     print("--" * 20)
     model.learn(total_timesteps=int(1e6), callback=checkpoint_callback)
-    model.save("mask_ppo_v2")
+    model.save("mask_ppo_v3")
 
     # Later, load the model and resume training
     # The model continues learning from where it left off
@@ -101,7 +101,7 @@ if __name__ == '__main__':
         demands = get_actual_demand(orig_demands, seed=seed)
         env = gym.make("ServerFleetEnv", datacenters=datacenters, demands=demands, servers=servers, selling_prices=selling_prices)
         # Load the most recent checkpoint
-        model = MaskablePPO.load("mask_ppo_v2", env=env)
+        model = MaskablePPO.load("mask_ppo_v3", env=env)
         obs, info = env.reset()
         objective = 0
         solution = []
@@ -109,7 +109,7 @@ if __name__ == '__main__':
         while timestep < 169:
             action, _states = model.predict(obs, action_masks=get_action_masks(env))
             obs, reward, terminated, truncated, info = env.step(action)
-            action = map_action(action, timestep)
+            action = env.map_action(action, timestep)
             nextstep = action.pop("nextstep")
             if action["action"] != "hold" and info["valid"]:
                 solution.append(action)

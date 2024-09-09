@@ -6,8 +6,8 @@ from evaluation import evaluation_function
 from seeds import known_seeds
 
 # LOAD SOLUTION
-# best_solution = load_solution('./output/best_solution.json')
-best_solution = load_solution('./test_output/1061.json')
+best_solution = load_solution('./output/best_solution.json')
+# best_solution = load_solution('./test_output/1741.json')
 # LOAD PROBLEM DATA
 demand, datacenters, servers, selling_prices = load_problem_data()
 
@@ -34,7 +34,7 @@ bestscore = evaluation_function(best_solution,
                             datacenters,
                             servers,
                             selling_prices,
-                            seed=1061,
+                            seed=1741,
                             verbose=True)
 
 print(f'Best solution score on seed 1061: {bestscore}')
