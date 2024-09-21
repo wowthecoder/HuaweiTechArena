@@ -19,7 +19,7 @@ score = evaluation_function(fleet,
                             servers,
                             selling_prices,
                             elasticity,
-                            seed=123)
+                            seed=0)
 
 print(f'Solution score: {score}')
 

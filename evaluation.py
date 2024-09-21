@@ -302,6 +302,7 @@ def check_datacenter_slots_size_constraint(fleet):
     test = slots['slots_size'] > slots['slots_capacity']
     constraint = test.any()
     if constraint:
+        print(fleet)
         raise(ValueError('Constraint 2 has been violated.'))
 
 
@@ -581,6 +582,7 @@ def evaluation_function(fleet,
                                 verbose=verbose)
     # CATCH EXCEPTIONS
     except Exception as e:
+        print(e)
         logger.error(e)
         return None
 
