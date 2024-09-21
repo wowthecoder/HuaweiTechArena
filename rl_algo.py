@@ -4,6 +4,8 @@ import os
 import numpy as np
 import pandas as pd
 from stable_baselines3 import PPO
+from sb3_contrib import MaskablePPO
+from sb3_contrib.common.maskable.utils import get_action_masks
 from stable_baselines3.common.vec_env import SubprocVecEnv
 from stable_baselines3.common.utils import set_random_seed
 from stable_baselines3.common.env_checker import check_env
@@ -11,7 +13,9 @@ from stable_baselines3.common.callbacks import CheckpointCallback
 from utils import load_problem_data, save_solution
 from evaluation import get_actual_demand
 from seeds import known_seeds
-from custom_rl_env import map_action
+import warnings
+
+warnings.filterwarnings('ignore')
 
 # For more examples, refer to https://stable-baselines3.readthedocs.io/en/master/guide/examples.html
 
@@ -19,15 +23,15 @@ from custom_rl_env import map_action
 gym.envs.registration.register(
     id='ServerFleetEnv',
     entry_point='custom_rl_env:ServerFleetEnv',
-    max_episode_steps=168,
+    max_episode_steps=30000,
 )
 
 # load the problem data
-demands, datacenters, servers, selling_prices = load_problem_data()
+orig_demands, datacenters, servers, selling_prices = load_problem_data()
 
-demands = get_actual_demand(demands, seed=1061)
-demands.to_csv('./rl_data/actual_demand_1061.csv', index=False)
-num_cpu = os.cpu_count()
+demands_1061 = get_actual_demand(orig_demands, seed=1061)
+# demands.to_csv('./rl_data/actual_demand_1061.csv', index=False)
+num_cpu = 4 # os.cpu_count() // 2
 
 def make_env(env_id: str, rank: int, seed: int = 0):
     """
@@ -38,10 +42,10 @@ def make_env(env_id: str, rank: int, seed: int = 0):
     :param rank: index of the subprocess
     """
     def _init():
-        env = gym.make(env_id, datacenters=datacenters, demands=demands, servers=servers, selling_prices=selling_prices)
+        env = gym.make(env_id, datacenters=datacenters, demands=demands_1061, servers=servers, selling_prices=selling_prices)
         env.reset(seed=seed + rank)
-        # wrapped_env = FlattenObservation(env)
         # check_env(env)
+        # wrapped_env = FlattenObservation(env)
         return env
     
     set_random_seed(seed)
@@ -49,17 +53,18 @@ def make_env(env_id: str, rank: int, seed: int = 0):
 
 if __name__ == '__main__':
     # Create the model
-    vec_env = SubprocVecEnv([make_env("ServerFleetEnv", i) for i in range(num_cpu)])
-    model = PPO("MultiInputPolicy", vec_env, verbose=1)
-    # Print the device
+    env = SubprocVecEnv([make_env("ServerFleetEnv", i) for i in range(num_cpu)])
+    # env = gym.make("ServerFleetEnv", datacenters=datacenters, demands=demands, servers=servers, selling_prices=selling_prices)
+    model = MaskablePPO("MultiInputPolicy", env, verbose=1, gamma=0.99)
+    # Print the number of cpus on the device
     print(f"Number of cpus: {num_cpu}")
 
     # Create a checkpoint callback to save the model every 50000 steps
-    checkpoint_callback = CheckpointCallback(save_freq=50000//num_cpu, save_path='./rl_logs/ppo_v3/', name_prefix='ppo_checkpoint')
+    checkpoint_callback = CheckpointCallback(save_freq=50000//num_cpu, save_path='./rl_logs/mask_ppo_v3/', name_prefix='ppo_checkpoint')
 
     # To resume training from a checkpoint, uncomment the code below:
     # Directory where checkpoints are saved
-    # checkpoint_dir = './rl-logs/'
+    # checkpoint_dir = './rl_logs/mask_ppo_v2'
 
     # # List all files in the checkpoint directory
     # checkpoint_files = [f for f in os.listdir(checkpoint_dir) if f.endswith('.zip')]
@@ -72,46 +77,52 @@ if __name__ == '__main__':
     # latest_checkpoint_path = os.path.join(checkpoint_dir, latest_checkpoint)
 
     # # Load the most recent checkpoint
-    # model = PPO.load(latest_checkpoint_path, env=env)
+    # model = MaskablePPO.load(latest_checkpoint_path, env=env)
 
     # # Resume training
-    # model.learn(total_timesteps=10000)
+    # # model.learn(total_timesteps=10000)
 
     # Each episode takes about 15k - 25k actions
     print("\nTraining started")
     print("--" * 20)
     model.learn(total_timesteps=int(1e6), callback=checkpoint_callback)
-    model.save("ppo_v3")
+    model.save("mask_ppo_v3")
 
     # Later, load the model and resume training
     # The model continues learning from where it left off
     # model = PPO.load("ppo_v1", env=env)
     # model.learn(total_timesteps=10000)
 
-    obs, info = vec_env.reset()
     # Make a solution for each dictionary
     # Get the best score 
     training_seeds = known_seeds('training')
     print("\nNow predicting\n")
     for seed in training_seeds:
+        demands = get_actual_demand(orig_demands, seed=seed)
+        env = gym.make("ServerFleetEnv", datacenters=datacenters, demands=demands, servers=servers, selling_prices=selling_prices)
+        # Load the most recent checkpoint
+        model = MaskablePPO.load("mask_ppo_v3", env=env)
+        obs, info = env.reset()
         objective = 0
         solution = []
         timestep = 1
         while timestep < 169:
-            action, _states = model.predict(obs)
-            obs, reward, terminated, truncated, info = vec_env.step(action)
-            action = map_action(action, timestep)
+            action, _states = model.predict(obs, action_masks=get_action_masks(env))
+            obs, reward, terminated, truncated, info = env.step(action)
+            action = env.map_action(action, timestep)
             nextstep = action.pop("nextstep")
-            solution.append(action)
+            if action["action"] != "hold" and info["valid"]:
+                solution.append(action)
             timestep += nextstep 
             objective += reward
-            print(action)
+            print(action, info["valid"])
             # print a divider
             print("--" * 20)
             if terminated or truncated:
+                print("terminated at timestep", timestep, terminated, truncated)
                 break
 
-        save_solution(solution, f"./output/{seed}.json")
+        save_solution(solution, f"./test_output/{seed}.json")
         
         print(f"Objective for seed {seed} is: {objective}")
 

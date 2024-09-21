@@ -1,2 +1,4 @@
 rl_logs/
 huaweienv/
+__pycache__/
+*.zip

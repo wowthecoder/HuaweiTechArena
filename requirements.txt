@@ -3,7 +3,8 @@ numpy==1.26.4
 scipy==1.13.1
 gymnasium
 stable-baselines3[extra]
-# --extra-index-url https://download.pytorch.org/whl/cu118
+sb3-contrib
+--extra-index-url https://download.pytorch.org/whl/cu118
 torch 
 torchvision
-torchaudio
+torchaudiImdsfasddzrhsdrhfsfddfhsdhfrdxfhiansjhgoapnsdgpoiandsgfdxhfdz   1453483cdg mnxi0-

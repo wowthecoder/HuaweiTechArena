@@ -2,28 +2,30 @@ import pandas as pd
 import gymnasium as gym
 import os
 import numpy as np
+from sb3_contrib import MaskablePPO
+from sb3_contrib.common.maskable.utils import get_action_masks
 from stable_baselines3 import PPO
 from utils import save_solution, load_problem_data
 from seeds import known_seeds
-from custom_rl_env import map_action
 from evaluation import get_actual_demand
+import warnings 
 
-demands, datacenters, servers, selling_prices = load_problem_data()
-demands = get_actual_demand(demands, seed=1061)
+warnings.filterwarnings('ignore')
+
+orig_demands, datacenters, servers, selling_prices = load_problem_data()
+# demands = get_actual_demand(demands, seed=1061)
 
 gym.envs.registration.register(
     id='ServerFleetEnv',
     entry_point='custom_rl_env:ServerFleetEnv',
-    max_episode_steps=168,
+    max_episode_steps=30000,
 )
 
-env = gym.make("ServerFleetEnv", datacenters=datacenters, demands=demands, servers=servers, selling_prices=selling_prices)
-obs, info = env.reset()
 # Make a solution for each dictionary
 # Get the best score 
 # To resume training from a checkpoint, uncomment the code below:
 # Directory where checkpoints are saved
-checkpoint_dir = './rl_logs/ppo_v2'
+checkpoint_dir = './rl_logs/mask_ppo_v3'
 
 # List all files in the checkpoint directory
 checkpoint_files = [f for f in os.listdir(checkpoint_dir) if f.endswith('.zip')]
@@ -36,27 +38,40 @@ latest_checkpoint = checkpoint_files[-1]
 latest_checkpoint_path = os.path.join(checkpoint_dir, latest_checkpoint)
 print(latest_checkpoint_path)
 
-# Load the most recent checkpoint
-model = PPO.load(latest_checkpoint_path, env=env)
+# Make a solution for each dictionary
+# Get the best score 
 training_seeds = known_seeds('training')
 print("\nNow predicting\n")
 for seed in training_seeds:
+    demands = get_actual_demand(orig_demands, seed=seed)
+    env = gym.make("ServerFleetEnv", datacenters=datacenters, demands=demands, servers=servers, selling_prices=selling_prices)
+    # Load the most recent checkpoint
+    model = MaskablePPO.load(latest_checkpoint_path, env=env)
+    obs, info = env.reset()
     objective = 0
     solution = []
-    while True:
-        action, _states = model.predict(obs)
+    timestep = 1
+    while timestep < 169:
+        action, _states = model.predict(obs, action_masks=get_action_masks(env), deterministic=True)
         obs, reward, terminated, truncated, info = env.step(action)
-        action = map_action(action)
-        if action: # if action is not hold
-            solution.append(action)
+        action = env.map_action(action, timestep)
+        nextstep = action.pop("nextstep")
+        if action["action"] != "hold" and info["valid"]:
             print(action)
+            print("--" * 20)
+            solution.append(action)
+        timestep += nextstep 
         objective += reward
-        print(reward)
-        # print a divider
-        print("--" * 20)
         if terminated or truncated:
+            print("terminated at timestep", timestep, terminated, truncated)
             break
 
     save_solution(solution, f"./test_output/{seed}.json")
     
     print(f"Objective for seed {seed} is: {objective}")
+
+# fleet = pd.read_csv('./rl_data/fleet.csv')
+
+# sgen = fleet.loc[fleet['server_id'] == '69b3d132-028c-4e06-96ec-81f2f2a7fa7c', 'server_generation'].values[0]
+
+# print(sgen)
