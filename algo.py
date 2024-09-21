@@ -46,7 +46,8 @@ def generate_neighbor(current_sequence):
             else:
                 ts = random.randint(97, 167)
                 server = random.choice(['CPU.S3', 'CPU.S4', 'GPU.S2', 'GPU.S3'])
-        
+            if (ts == 1 and action == 'move'):
+                continue
             rt = eval(servers[servers['server_generation'] == server]['release_time'].sample().values[0])
         
             if ts < min(rt) or ts > max(rt):
