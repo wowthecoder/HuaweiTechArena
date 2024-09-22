@@ -506,11 +506,18 @@ def get_evaluation(fleet,
             output = {'time-step': ts,
                       'O': round(OBJECTIVE, 2),
                       'P': round(P, 2)}
+            # save FLEET to a separate file using json
+            import json
+            with open(f'./output/fleet.json', 'w') as f:
+                # add time_step as the first column
+                f.write(FLEET.to_json())
         else:
             # PREPARE OUTPUT
             output = {'time-step': ts,
                       'O': np.nan,
                       'P': np.nan}
+        if verbose:
+            print(output)
 
             
     return OBJECTIVE
@@ -579,6 +586,7 @@ def evaluation_function(fleet,
                                 verbose=verbose)
     # CATCH EXCEPTIONS
     except Exception as e:
+        print(e)
         logger.error(e)
         return None
 

@@ -1,0 +1,163 @@
+
+import numpy as np
+import pandas as pd
+from uuid import uuid1
+from seeds import known_seeds
+from utils import load_problem_data, save_solution
+from evaluation import (
+    change_elasticity_format,
+    change_selling_prices_format,
+    fleet_data_preparation,
+    get_actual_demand,
+    get_capacity_by_server_generation_latency_sensitivity,
+    get_profit,
+    get_time_step_demand,
+    get_time_step_fleet,
+    get_time_step_prices,
+    pricing_data_preparation,
+    update_fleet,
+    update_selling_prices,
+    update_demand_according_to_prices
+)
+
+
+def get_my_solution(d):
+    cols = ["time_step", "datacenter_id", "server_generation", "server_id", "action", "server_type", "release_time", "purchase_price", "slots_size", "energy_consumption", "capacity", "life_expectancy", "cost_of_moving", "average_maintenance_fee", "cost_of_energy", "latency_sensitivity", "slots_capacity", "selling_price", "lifespan", "moved", "cost"]
+    FLEET = pd.DataFrame(columns=cols)
+    PRICING_STRAT = pd.DataFrame(columns=["time_step"])
+
+    # LOAD PROBLEM DATA
+    demand, datacenters, servers, selling_prices, elasticity = load_problem_data()
+
+    # Prepare pricing strategy data
+    PRICING_STRAT = pricing_data_preparation(PRICING_STRAT)
+    elasticity = change_elasticity_format(elasticity)
+    selling_prices = change_selling_prices_format(selling_prices)
+    base_prices = selling_prices.copy()
+
+    # Define latency to datacenter mapping
+    DATA_CENTER_LATENCY = {"low": ["DC1"], "medium": ["DC2"], "high": ["DC3", "DC4"]}
+
+
+    def adjust_value(row):
+        if row['server_generation'].startswith('CPU'):
+            # Update columns for CPU (divide by 1000 and round)
+            row['high'] = round(row['high'] / 1000)
+            row['medium'] = round(row['medium'] / 1000)
+            row['low'] = round(row['low'] / 1000)
+        elif row['server_generation'].startswith('GPU'):
+            # Update columns for GPU (divide by 100 and round)
+            row['high'] = round(row['high'] / 100)
+            row['medium'] = round(row['medium'] / 100)
+            row['low'] = round(row['low'] / 100)
+        return row
+
+    # Apply the function to each row and update in place
+    # d = d.apply(adjust_value, axis=1)
+    from scipy.ndimage import gaussian_filter1d
+
+    SIGMA = 20
+    d['high'] = np.minimum(gaussian_filter1d(d['high'], sigma=SIGMA), d['high'])
+    d['low'] = np.minimum(gaussian_filter1d(d['low'], sigma=SIGMA), d['low'])
+    d['medium'] = np.minimum(gaussian_filter1d(d['medium'], sigma=SIGMA), d['medium'])
+
+    slotsize_capacity_map = {} # 
+    for dc in ["DC1", "DC2", "DC3", "DC4"]:
+        slotsize_capacity_map[dc] = [FLEET["datacenter_id" == dc]["capacity"].sum(), FLEET["datacenter_id" == dc]["slots_size"].sum()]
+
+
+    # Iterate through time steps
+    for t in range(1, 169):
+        D = d[d['time_step'] == t]
+
+        # Update selling prices and demand based on pricing strategy
+        ts_prices = get_time_step_prices(PRICING_STRAT, t)
+        selling_prices = update_selling_prices(selling_prices, ts_prices)
+        D = update_demand_according_to_prices(D, selling_prices, base_prices, elasticity)
+
+        ts_fleet = []
+
+        # Vectorized loop over demand data
+        for server_gen, demand_row in D.groupby('server_generation'):
+            for latency in ['low', 'medium', 'high']:
+                dcs = DATA_CENTER_LATENCY[latency]
+                curr_demand_cap = demand_row[latency].sum()  # Current demand for this latency
+
+                # Find servers that match server_gen and data center latency
+                useful_servers = FLEET[(FLEET["server_generation"] == server_gen) & FLEET["datacenter_id"].isin(DATA_CENTER_LATENCY[latency])]
+                print("Useful servers", useful_servers)
+                # Calculate remaining capacity and slots
+                print("Curr demand cap", curr_demand_cap)
+                capacity_needed = curr_demand_cap - capacity_map[dcs[0]]
+                print("Capacity needed", capacity_needed)
+                datacenter_max_slots = datacenters[datacenters["latency_sensitivity"] == latency]["slots_capacity"].sum()
+                slot_size_remaining = datacenter_max_slots - useful_servers["slots_size"].sum()
+
+                # Loop while capacity is needed
+                while capacity_needed > 0:
+                    for k in DATA_CENTER_LATENCY[latency]:
+                        data_center_to_add = k
+                        datacenter_curr_slots = FLEET[FLEET["datacenter_id"] == k]["slots_size"].sum()
+
+                        if datacenter_max_slots - datacenter_curr_slots < slot_size_remaining:
+                            break
+
+                        # Filter the fleet for the current datacenter and sort by lifespan
+                        filtered_FLEET = FLEET[FLEET["datacenter_id"] == k]
+                        FLEET_sorted = filtered_FLEET.sort_values(by='lifespan', ascending=True)
+
+                        # Dismiss servers to make space
+                        FLEET_sorted_row = 0
+                        while datacenter_max_slots - datacenter_curr_slots < slot_size_remaining and DATA_CENTER_LATENCY[latency].index(k) == len(DATA_CENTER_LATENCY[latency]) - 1:
+                            ts_fleet.append({
+                                "time_step": t,
+                                "datacenter_id": DATA_CENTER_LATENCY[latency][0],
+                                "server_generation": FLEET_sorted["server_generation"].iloc[FLEET_sorted_row],
+                                "server_id": FLEET_sorted["server_id"].iloc[FLEET_sorted_row],
+                                "action": "dismiss"
+                            })
+                            datacenter_curr_slots -= FLEET_sorted["slots_size"].iloc[FLEET_sorted_row]
+                            FLEET_sorted_row += 1
+                            data_center_to_add = DATA_CENTER_LATENCY[latency][0]
+
+                    # Add new servers
+                    ts_fleet.append({
+                        'time_step': t,
+                        'datacenter_id': DATA_CENTER_LATENCY[latency][0],#data_center_to_add,
+                        "server_id": str(uuid1()),  # Generate unique server_id
+                        "server_generation": server_gen,
+                        "action": "buy"
+                    })
+
+                    # Update remaining capacity
+                    capacity_needed -= servers[servers["server_generation"] == server_gen].iloc[0]["capacity"]
+
+        # Convert to DataFrame
+        ts_fleet = pd.DataFrame(data=ts_fleet, columns=cols)
+        ts_fleet = fleet_data_preparation(ts_fleet, servers, datacenters, selling_prices)
+
+        print(D)
+
+        # Update fleet for the current time step
+        FLEET = update_fleet(t, FLEET, ts_fleet)
+
+    return FLEET[['time_step', 'datacenter_id', "server_id", "server_generation", "action"]], PRICING_STRAT
+
+
+
+#seeds = known_seeds()
+seeds = [123]
+
+demand = pd.read_csv('./data/demand.csv')
+for seed in seeds:
+    # SET THE RANDOM SEED
+    np.random.seed(seed)
+
+    # GET THE DEMAND
+    actual_demand = get_actual_demand(demand)
+
+    # CALL YOUR APPROACH HERE
+    fleet, pricing_strategy = get_my_solution(actual_demand)
+
+    # SAVE YOUR SOLUTION
+    save_solution(fleet, pricing_strategy, f'./output/{seed}.json')

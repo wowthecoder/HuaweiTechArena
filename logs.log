@@ -24,3 +24,19 @@
 2024-09-21 21:19:15,931 | ERROR | 'time_step'
 2024-09-21 21:20:34,765 | ERROR | 'time_step'
 2024-09-21 21:31:41,651 | ERROR | Please check the price strategy solution format.
+2024-09-22 00:56:21,860 | ERROR | Please check the solution format.
+2024-09-22 00:56:32,711 | ERROR | Please check the solution format.
+2024-09-22 00:57:22,841 | ERROR | Please check the solution format.
+2024-09-22 00:57:53,141 | ERROR | Please check the solution format.
+2024-09-22 00:58:29,128 | ERROR | Please check the solution format.
+2024-09-22 04:09:17,867 | ERROR | "None of [Index(['1880d49e-38fb-4721-87ed-7847ab8eb18f'], dtype='object', name='server_id')] are in the [index]"
+2024-09-22 08:32:42,818 | ERROR | "None of [Index(['1880d49e-38fb-4721-87ed-7847ab8eb18f'], dtype='object', name='server_id')] are in the [index]"
+2024-09-22 08:34:20,468 | ERROR | "None of [Index(['1880d49e-38fb-4721-87ed-7847ab8eb18f'], dtype='object', name='server_id')] are in the [index]"
+2024-09-22 08:35:37,868 | ERROR | "None of [Index(['1880d49e-38fb-4721-87ed-7847ab8eb18f'], dtype='object', name='server_id')] are in the [index]"
+2024-09-22 08:36:19,713 | ERROR | "None of [Index(['1880d49e-38fb-4721-87ed-7847ab8eb18f'], dtype='object', name='server_id')] are in the [index]"
+2024-09-22 08:37:30,452 | ERROR | "None of [Index(['1880d49e-38fb-4721-87ed-7847ab8eb18f'], dtype='object', name='server_id')] are in the [index]"
+2024-09-22 08:40:22,440 | ERROR | "None of [Index(['1880d49e-38fb-4721-87ed-7847ab8eb18f'], dtype='object', name='server_id')] are in the [index]"
+2024-09-22 08:40:51,001 | ERROR | "None of [Index(['1880d49e-38fb-4721-87ed-7847ab8eb18f'], dtype='object', name='server_id')] are in the [index]"
+2024-09-22 08:41:42,978 | ERROR | "None of [Index(['1880d49e-38fb-4721-87ed-7847ab8eb18f'], dtype='object', name='server_id')] are in the [index]"
+2024-09-22 08:44:55,402 | ERROR | "None of [Index(['1880d49e-38fb-4721-87ed-7847ab8eb18f'], dtype='object', name='server_id')] are in the [index]"
+2024-09-22 08:45:29,749 | ERROR | "None of [Index(['1880d49e-38fb-4721-87ed-7847ab8eb18f'], dtype='object', name='server_id')] are in the [index]"
