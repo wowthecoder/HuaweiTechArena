@@ -24,9 +24,10 @@ class Algorithm:
         self.iterations_per_temp = 5
         self.constraint = 1100
         self.new_constraint = 1100
+        self.batch_sizes = [168, 84, 56, 42, 28, 24, 21, 14, 12, 8, 7, 6, 4, 3, 2, 1]
     
     def evaluate_solution(self, fleet, pricing_strategy, demand, datacenters, servers, selling_prices, elasticity, seed):
-        score = evaluation_function(fleet=fleet, pricing_strategy=pricing_strategy, demand=demand, datacenters=datacenters, servers=servers, selling_prices=selling_prices, elasticity=elasticity, seed=seed, verbose=1)
+        score = evaluation_function(fleet=fleet, pricing_strategy=pricing_strategy, demand=demand, datacenters=datacenters, servers=servers, selling_prices=selling_prices, elasticity=elasticity, seed=seed)
         return score
 
     def generate_initial_solution(self, seed):
@@ -36,6 +37,7 @@ class Algorithm:
         else:
             solution = load_solution('./output/best_solution.json')
         return solution
+    
     def get_objective(self,delta: np.ndarray, base_selling_price: float, demands: np.ndarray, price_elasticity_of_demand: float, constraint) -> float:
         selling_prices = base_selling_price + delta
         max_demand = np.max(demands)
@@ -62,6 +64,7 @@ class Algorithm:
 
         result = minimize(self.neg_get_objective, initial_delta, args=(base_selling_price, demands, price_elasticity_of_demand, constraint), bounds=bounds, method='Nelder-Mead')
         return result.x
+    
     def optimize_price(self,constraint):
         delta = []
         for sensitivity in ['high', 'medium', 'low']:
@@ -70,74 +73,77 @@ class Algorithm:
                 for i in cur:
                     delta.append(i+ self.selling_prices[(self.selling_prices['server_generation'] == name) & (self.selling_prices['latency_sensitivity'] == sensitivity)]['selling_price'].values[0])
         return delta
-    def generate_neighbor(self, current_sequence, seed):
+    def generate_neighbor(self, current_sequence, seed, batch_size=1, verbose=False):
         i = 0
         while True:
-            fleet = current_sequence[0]
-            pricing_strategy = current_sequence[1]
-            neighbor = fleet.copy()
-            t = random.choices([1, 2, 3], weights=[0.1,0.9,0], k=1)[0]
-            if t == 1:
-                if neighbor.empty:
-                    continue
-                new_neighbor = neighbor.drop(neighbor.sample().index)
-            elif t == 2:
-                datacenter = random.choice(['DC1', 'DC2', 'DC3', 'DC4'])
-                action = random.choice(['buy', 'move', 'dismiss'])
-                ts = random.randint(1, 168)
-                server = random.choice(['CPU.S1', 'CPU.S2', 'CPU.S3', 'CPU.S4', 'GPU.S1', 'GPU.S2', 'GPU.S3'])
-                if server == 'CPU.S1' and ts > 60:
-                    continue
-                if server == 'CPU.S2' and (ts > 96 or ts < 37):
-                    continue
-                if server == 'CPU.S3' and (ts < 73 or ts > 132):
-                    continue
-                if server == 'CPU.S4' and ts < 109:
-                    continue
-                if server == 'GPU.S1' and ts > 72:
-                    continue
-                if server == 'GPU.S2' and (ts < 49 or ts > 125):
-                    continue
-                if server == 'GPU.S3' and ts < 97:
-                    continue
-                if action == 'move':
-                    if ts == 1:
+            for _ in range(batch_size):
+                fleet = current_sequence[0]
+                pricing_strategy = current_sequence[1]
+                neighbor = fleet.copy()
+                t = random.choices([1, 2, 3], weights=[0.1,0.9,0], k=1)[0]
+                if t == 1:
+                    if neighbor.empty:
                         continue
-                rt = eval(self.servers[self.servers['server_generation'] == server]['release_time'].sample().values[0])
-                if ts < min(rt) or ts > max(rt):
-                    continue
-                fleet = get_time_step_fleet(neighbor, ts)
-                if fleet.empty:
-                    fleet = pd.DataFrame(columns=['datacenter_id', 'server_generation', 'slots_size'])
-                id = str(uuid.uuid4()) + '1'
-                if action == 'dismiss':
-                    if fleet.empty or fleet[(fleet['datacenter_id'] == datacenter) & (fleet['server_generation'] == server)].empty:
+                    new_neighbor = neighbor.drop(neighbor.sample().index)
+                elif t == 2:
+                    datacenter = random.choice(['DC1', 'DC2', 'DC3', 'DC4'])
+                    action = random.choice(['buy', 'move', 'dismiss'])
+                    ts = random.randint(1, 168)
+                    server = random.choice(['CPU.S1', 'CPU.S2', 'CPU.S3', 'CPU.S4', 'GPU.S1', 'GPU.S2', 'GPU.S3'])
+                    if server == 'CPU.S1' and ts > 60:
                         continue
-                    id = fleet[(fleet['datacenter_id'] == datacenter) & (fleet['server_generation'] == server)]['server_id'].sample().values[0]
-                if action == 'move':
-                    if fleet.empty or fleet[(fleet['server_generation'] == server)].empty:
+                    if server == 'CPU.S2' and (ts > 96 or ts < 37):
                         continue
-                    id = fleet[fleet['server_generation'] == server]['server_id'].sample().values
-                    id = random.choice(id)
-                new_record = pd.DataFrame([{
-                    'time_step': ts,
-                    'datacenter_id': datacenter,
-                    'server_generation': server,
-                    'server_id': id,
-                    'action': action
-                }])
-                new_neighbor = pd.concat([neighbor, new_record], ignore_index=True)
-            else:
-                # Change pricing strategy
-                new_pricing_strategy = pricing_strategy.copy()
-                c = random.choice([-1,1])
-                self.new_constraint = self.constraint + 10*c
-                delta = self.optimize_price(self.new_constraint)
-                new_pricing_strategy['price'] = delta
-                new_neighbor = neighbor
-                evaluation = self.evaluate_solution(new_neighbor, new_pricing_strategy, self.demand, self.datacenters, self.servers, self.selling_prices, self.elasticity, seed)
-                return (new_neighbor, pricing_strategy, evaluation)
-                
+                    if server == 'CPU.S3' and (ts < 73 or ts > 132):
+                        continue
+                    if server == 'CPU.S4' and ts < 109:
+                        continue
+                    if server == 'GPU.S1' and ts > 72:
+                        continue
+                    if server == 'GPU.S2' and (ts < 49 or ts > 125):
+                        continue
+                    if server == 'GPU.S3' and ts < 97:
+                        continue
+                    if action == 'move':
+                        if ts == 1:
+                            continue
+                    rt = eval(self.servers[self.servers['server_generation'] == server]['release_time'].sample().values[0])
+                    if ts < min(rt) or ts > max(rt):
+                        continue
+                    fleet = get_time_step_fleet(neighbor, ts)
+                    if fleet.empty:
+                        fleet = pd.DataFrame(columns=['datacenter_id', 'server_generation', 'slots_size'])
+                    id = str(uuid.uuid4()) + '1'
+                    if action == 'dismiss':
+                        if fleet.empty or fleet[(fleet['datacenter_id'] == datacenter) & (fleet['server_generation'] == server)].empty:
+                            continue
+                        id = fleet[(fleet['datacenter_id'] == datacenter) & (fleet['server_generation'] == server)]['server_id'].sample().values[0]
+                    if action == 'move':
+                        if fleet.empty or fleet[(fleet['server_generation'] == server)].empty:
+                            continue
+                        id = fleet[fleet['server_generation'] == server]['server_id'].sample().values
+                        id = random.choice(id)
+                    new_record = pd.DataFrame([{
+                        'time_step': ts,
+                        'datacenter_id': datacenter,
+                        'server_generation': server,
+                        'server_id': id,
+                        'action': action
+                    }])
+                    if verbose:
+                        print(new_record)
+                    new_neighbor = pd.concat([neighbor, new_record], ignore_index=True)
+                else:
+                    # Change pricing strategy
+                    new_pricing_strategy = pricing_strategy.copy()
+                    c = random.choice([-1,1])
+                    self.new_constraint = self.constraint + 10*c
+                    delta = self.optimize_price(self.new_constraint)
+                    new_pricing_strategy['price'] = delta
+                    new_neighbor = neighbor
+                    evaluation = self.evaluate_solution(new_neighbor, new_pricing_strategy, self.demand, self.datacenters, self.servers, self.selling_prices, self.elasticity, seed)
+                    return (new_neighbor, pricing_strategy, evaluation)
+                    
 
             try:
                 evaluation = self.evaluate_solution(new_neighbor, pricing_strategy, self.demand, self.datacenters, self.servers, self.selling_prices, self.elasticity, seed)
@@ -155,16 +161,17 @@ class Algorithm:
         best_solution = current_solution
         best_cost = 0
         print(best_cost)
+        index = 0
         while current_temp > stop_temp:
             print(f"Current Temp: {current_temp}")
             for _ in range(iterations):
-                neighbor_solution, neighbor_pricing, neighbor_cost = self.generate_neighbor(current_solution, seed)
+                neighbor_solution, neighbor_pricing, neighbor_cost = self.generate_neighbor(current_solution, seed, self.batch_sizes[index], True)
                 if neighbor_cost is None:
                     neighbor_cost = 0
                 neighbor_cost = float(neighbor_cost)
                 print(neighbor_cost)
                 delta_cost = neighbor_cost - best_cost
-                    
+                
                 if delta_cost > 0 or random.random() < expit(-delta_cost / current_temp):
                     current_solution = (neighbor_solution, neighbor_pricing)
                     self.constraint = self.new_constraint
@@ -176,6 +183,7 @@ class Algorithm:
                 else:
                     self.new_constraint = self.constraint
             current_temp *= cooling_rate
+            index += 1
         return best_solution, best_cost
 
     def generate_solution(self, seed):
