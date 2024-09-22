@@ -33,7 +33,15 @@ class Algorithm:
     def generate_initial_solution(self, seed):
         file_path = f'./output/{seed}.json'
         if os.path.exists(file_path):
+            
             solution = load_solution(file_path)
+            seed_solution = evaluation_function(fleet=solution[0], pricing_strategy=solution[1], demand=self.demand, datacenters=self.datacenters, servers=self.servers, selling_prices=self.selling_prices, elasticity=self.elasticity, seed=seed)
+            best_solution = load_solution('./output/best_solution.json')
+            best_solution_score = evaluation_function(fleet=best_solution[0], pricing_strategy=best_solution[1], demand=self.demand, datacenters=self.datacenters, servers=self.servers, selling_prices=self.selling_prices, elasticity=self.elasticity, seed=seed)
+            if seed_solution is not None and seed_solution > best_solution_score:
+                return solution
+            else:
+                return best_solution
         else:
             solution = load_solution('./output/best_solution.json')
         return solution
